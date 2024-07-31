@@ -1,0 +1,19 @@
+#<IfModule mod_rewrite.c>
+#    RewriteEngine On
+##    RewriteBase /social-media-app-php/  # Adjust this to match your subdirectory or root
+#
+#    # Ensure that requests to the /public directory or existing files are not rewritten
+##    RewriteCond %{REQUEST_URI} !^/public [NC]
+##    RewriteRule ^(.*)$ ./src/public/$1 [QSA,L]
+#    RewriteCond %{REQUEST_FILENAME} !-f
+#    RewriteCond %{REQUEST_FILENAME} !-d
+#
+#    # Redirect all other requests to index.php and pass the URL as a parameter
+#    RewriteRule ^(.*)$ index.php?url=$1 [QSA,L]
+#
+#
+#    RewriteCond %{REQUEST_URI} !^/public [NC]
+##    RewriteCond %{REQUEST_FILENAME} !-f
+##    RewriteCond %{REQUEST_FILENAME} !-d
+#    RewriteRule ^(.*)$ ./src/public/$1 [QSA,L]
+#</IfModule>
