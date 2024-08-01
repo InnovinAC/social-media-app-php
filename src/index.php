@@ -10,12 +10,3 @@
     use App\Framework\Request;
     $request = Request::createFromGlobals();
     require_once __DIR__ . '/bootstrap.php';
-
-
-
-
-
-
-
-
-
