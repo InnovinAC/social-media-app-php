@@ -5,12 +5,10 @@
     error_reporting(E_ALL);
     require __DIR__ . '/../vendor/autoload.php';
 
-//    error_reporting(1);
-    use App\Framework\Request;
 
-//    try {
+
+    use App\Framework\Request;
     $request = Request::createFromGlobals();
-//    dd($request);
     require_once __DIR__ . '/bootstrap.php';
 
 
