@@ -1,6 +1,25 @@
+<?php
+    global $_yield, $_section, $_include;
+
+?>
+<!DOCTYPE html>
 <html>
-<title>Heyyy</title>
+<head>
+    <?php
+        $_include('header');
+    ?>
+
+</head>
+
+<body>
+<?php
+
+
+    $_yield('content')
+
+?>
+</body>
 </html>
 
-<?php
+
 

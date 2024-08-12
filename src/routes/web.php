@@ -1,4 +1,3 @@
 <?php
-use \App\Library\Router;
-//$router = Router::getInstance();
-$router->add('/hey', 'SiteController@index', ['GET']);
+    global $router;
+    $router->add('/', 'SiteController@index', ['GET']);

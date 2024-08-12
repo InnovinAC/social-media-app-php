@@ -5,6 +5,8 @@
         protected static $data = [];
         protected static $sections = [];
         protected static $sectionStack = [];
+        protected static $includeStack = [];
+        protected static $includes = [];
         protected static $layout;
 
         public static function render(string $name, array $data = []): void {
@@ -21,15 +23,28 @@
             } else {
                 echo $content;
             }
+
         }
 
         public static function extends(string $layout): void {
             self::$layout = $layout;
         }
 
-        public static function section(string $name): void {
-            self::$sectionStack[] = $name;
-            ob_start();
+        public static function include(string $layout): void {
+            if (file_exists(__DIR__ . '/../../views/includes/' . $layout . '.view.php')) {
+                ob_start();
+                require __DIR__ . '/../../views/includes/' . $layout . '.view.php';
+                echo ob_get_clean();
+            }
+        }
+
+        public static function section(string $name, $value = ''): void {
+            if (!$value) {
+                self::$sectionStack[] = $name;
+                ob_start();
+            } else {
+                self::$sections[$name] =$value;
+            }
         }
 
         public static function endSection(): void {
