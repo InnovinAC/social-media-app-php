@@ -1,0 +1,21 @@
+# Keep the published package to what an application actually needs. Everything
+# below is stripped from `composer require innovin/phpvin` downloads.
+#
+# src/ and resources/ must stay: Assets::scriptPath() reads resources/js/phpvin.js
+# out of the installed package at runtime.
+
+/skeleton            export-ignore
+/tests               export-ignore
+/bin                 export-ignore
+/.github             export-ignore
+/.gitattributes      export-ignore
+/.gitignore          export-ignore
+/.dockerignore       export-ignore
+/phpunit.xml         export-ignore
+/Makefile            export-ignore
+/Dockerfile          export-ignore
+/docker-compose.yml  export-ignore
+
+* text=auto eol=lf
+*.js  text
+*.php text

@@ -1,0 +1,37 @@
+services:
+  web:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./:/app
+    environment:
+      APP_DEBUG: "true"
+      # Swap to the mysql service below by uncommenting these.
+      # DB_DRIVER: mysql
+      # DB_HOST: db
+      # DB_DATABASE: phpvin
+      # DB_USERNAME: phpvin
+      # DB_PASSWORD: secret
+
+  # Optional. The skeleton defaults to SQLite and needs nothing here.
+  db:
+    image: mysql:8
+    profiles: ["mysql"]
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql-data:/var/lib/mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: secret
+      MYSQL_DATABASE: phpvin
+      MYSQL_USER: phpvin
+      MYSQL_PASSWORD: secret
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  mysql-data:

@@ -1,0 +1,12 @@
+/vendor/
+/composer.lock
+
+.env
+*.sqlite
+
+/storage/views/*
+!/storage/views/.gitignore
+
+/public/js/jquery.min.js
+storage/logs/
+storage/rate-limit/
