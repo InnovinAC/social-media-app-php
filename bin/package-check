@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+#
+# Prove innovin/phpvin works as an installed dependency.
+#
+# The skeleton in this repository resolves the framework through a symlinked
+# path repository, which hides a whole class of packaging mistakes: a file left
+# out of the distribution, a path that only resolves because the source happens
+# to sit next door. This builds the package the way `.gitattributes` says it
+# ships, installs it as a real copy into a throwaway application, and boots it.
+#
+#   bin/package-check
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+WORK="$(mktemp -d)"
+SERVER_PID=""
+
+# Ask the OS for a free port rather than hoping a hard-coded one is idle.
+PORT="${PACKAGE_CHECK_PORT:-$(
+    php -r '$s = stream_socket_server("tcp://127.0.0.1:0");
+            echo explode(":", stream_socket_get_name($s, false))[1];
+            fclose($s);'
+)}"
+
+cleanup() {
+    if [ -n "$SERVER_PID" ]; then
+        kill "$SERVER_PID" 2>/dev/null || true
+        # Reap it, so the shell does not print its own "Terminated" line.
+        wait "$SERVER_PID" 2>/dev/null || true
+    fi
+    rm -rf "$WORK"
+}
+trap cleanup EXIT
+
+say() { printf '\033[1m%s\033[0m\n' "$*"; }
+ok()  { printf '  \033[32mok\033[0m    %s\n' "$*"; }
+bad() { printf '  \033[31mFAIL\033[0m  %s\n' "$*"; FAILURES=$((FAILURES + 1)); }
+
+FAILURES=0
+
+say "Building the distributable package"
+
+mkdir -p "$WORK/phpvin" "$WORK/app"
+
+# The export-ignore rules are the source of truth for what ships.
+# Read with a loop rather than mapfile: macOS still ships bash 3.2.
+IGNORED=()
+while IFS= read -r path; do
+    [ -n "$path" ] && IGNORED+=("$path")
+done < <(
+    grep -E '^[[:space:]]*/?[^#[:space:]]+[[:space:]]+export-ignore' "$ROOT/.gitattributes" 2>/dev/null \
+    | awk '{ sub(/^\//, "", $1); print $1 }'
+)
+
+if git -C "$ROOT" rev-parse HEAD >/dev/null 2>&1 \
+   && git -C "$ROOT" diff --quiet HEAD -- src resources composer.json 2>/dev/null; then
+    # Clean and committed: this is byte-for-byte what Packagist would serve.
+    git -C "$ROOT" archive --format=tar HEAD | tar -x -C "$WORK/phpvin"
+    ok "packaged from the committed tree"
+else
+    # Uncommitted work: package what is on disk, applying the same rules by
+    # hand. A published tag would differ, so say so rather than pretend.
+    EXCLUDES=(--exclude=.git --exclude=vendor)
+    for path in "${IGNORED[@]}"; do EXCLUDES+=("--exclude=$path"); done
+
+    rsync -a "${EXCLUDES[@]}" "$ROOT/" "$WORK/phpvin/"
+    printf '  \033[33mnote\033[0m  packaged from the working tree: src/ or resources/ has uncommitted changes\n'
+fi
+
+for required in src/Application.php resources/js/phpvin.js composer.json LICENSE; do
+    [ -f "$WORK/phpvin/$required" ] && ok "ships $required" || bad "missing $required"
+done
+
+for excluded in skeleton tests phpunit.xml Makefile; do
+    [ -e "$WORK/phpvin/$excluded" ] && bad "$excluded should not ship" || ok "excludes $excluded"
+done
+
+say "Installing it into a throwaway application"
+
+cp -R "$ROOT/skeleton/." "$WORK/app/"
+rm -rf "$WORK/app/vendor" "$WORK/app/composer.lock" "$WORK/app/database"/*.sqlite
+cp "$WORK/app/.env.example" "$WORK/app/.env"
+
+# A tagged release, resolved by version, copied rather than symlinked.
+git -C "$WORK/phpvin" init -q .
+git -C "$WORK/phpvin" add -A
+git -C "$WORK/phpvin" -c user.email=check@local -c user.name=check commit -qm "release"
+git -C "$WORK/phpvin" tag v0.1.0
+
+php -r '
+$file = $argv[1];
+$c = json_decode(file_get_contents($file), true);
+$c["repositories"] = [["type" => "path", "url" => "../phpvin", "options" => ["symlink" => false]]];
+file_put_contents($file, json_encode($c, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+' "$WORK/app/composer.json"
+
+(cd "$WORK/app" && composer install --no-interaction --quiet)
+
+[ -L "$WORK/app/vendor/innovin/phpvin" ] \
+    && bad "installed as a symlink, so this proves nothing" \
+    || ok "installed as a real directory"
+
+say "Booting it"
+
+(cd "$WORK/app" && php database/migrate.php > /dev/null) && ok "migrations run" || bad "migrations failed"
+
+(cd "$WORK/app" && php -S "localhost:$PORT" -t public > "$WORK/server.log" 2>&1) &
+SERVER_PID=$!
+sleep 1.5
+
+check_status() {
+    local path="$1" expected="$2" label="$3"
+    local actual
+    actual="$(curl -s -o /dev/null -w '%{http_code}' "http://localhost:$PORT$path")"
+    [ "$actual" = "$expected" ] && ok "$label" || bad "$label (got $actual, wanted $expected)"
+}
+
+check_status /            200 "the home page renders"
+check_status /api/health  200 "the JSON endpoint answers"
+check_status /_phpvin/phpvin.js 200 "phpvin.js is served out of vendor"
+check_status /nope        404 "an unknown path is a 404"
+check_status /dashboard   302 "a protected route redirects"
+
+grep -iE 'PHP (Fatal|Parse)|Uncaught' "$WORK/server.log" > /dev/null \
+    && bad "the server log has fatals" \
+    || ok "no fatals in the server log"
+
+echo
+if [ "$FAILURES" -eq 0 ]; then
+    printf '\033[32mThe package installs and boots cleanly.\033[0m\n'
+else
+    printf '\033[31m%d check(s) failed.\033[0m\n' "$FAILURES"
+    sed 's/^/    /' "$WORK/server.log" | tail -20
+fi
+
+exit "$FAILURES"

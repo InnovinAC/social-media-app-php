@@ -1,4 +1,14 @@
-node_modules
-dist
-vendor
-.env
+/vendor/
+/.phpunit.cache/
+/.phpunit.result.cache
+
+# The skeleton keeps its own .gitignore for its vendor, .env and database.
+
+# Editor and OS noise
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Local lint cache: machine-specific, and it churns on every run.
+.php-cs-fixer.cache

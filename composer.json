@@ -1,13 +1,19 @@
 {
-    "name": "innovin/social-media-app-php",
-    "description": "A social media app",
-    "type": "project",
-    "autoload": {
-        "psr-4": {
-            "App\\": "src/app/",
-            "Database\\": "src/database"
-        }
-    },
+    "name": "innovin/phpvin",
+    "description": "A small server-rendered PHP framework. Explicit wiring, no facades, no globals, small enough to read in one sitting.",
+    "type": "library",
+    "keywords": [
+        "framework",
+        "router",
+        "mvc",
+        "active-record",
+        "twig",
+        "psr-11",
+        "jquery",
+        "ujs"
+    ],
+    "homepage": "https://github.com/innovin/phpvin",
+    "license": "MIT",
     "authors": [
         {
             "name": "innovin",
@@ -15,7 +21,58 @@
         }
     ],
     "require": {
+        "php": "^8.2",
+        "ext-pdo": "*",
+        "psr/container": "^2.0",
+        "psr/log": "^3.0"
+    },
+    "require-dev": {
+        "friendsofphp/php-cs-fixer": "^3.64",
+        "phpstan/phpstan": "^2.0",
+        "phpunit/phpunit": "^11.0",
         "symfony/var-dumper": "^7.0",
-        "vlucas/phpdotenv": "^5.6"
+        "twig/twig": "^3.10"
+    },
+    "suggest": {
+        "twig/twig": "For the Twig view engine. Not needed for the php or html engines, or for an API-only app.",
+        "vlucas/phpdotenv": "To load configuration from a .env file."
+    },
+    "autoload": {
+        "psr-4": {
+            "Phpvin\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Phpvin\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "test": "phpunit",
+        "analyse": "phpstan analyse --memory-limit=512M",
+        "style": "php-cs-fixer fix --dry-run --diff",
+        "style:fix": "php-cs-fixer fix",
+        "check": [
+            "@style",
+            "@analyse",
+            "@test"
+        ]
+    },
+    "extra": {
+        "branch-alias": {
+            "dev-master": "0.1.x-dev",
+            "dev-main": "0.1.x-dev"
+        }
+    },
+    "config": {
+        "sort-packages": true
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true,
+    "scripts-descriptions": {
+        "test": "Run the test suite",
+        "analyse": "Run PHPStan",
+        "style": "Check code style without changing anything",
+        "check": "Everything CI runs"
     }
 }

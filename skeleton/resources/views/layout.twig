@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+
+    {# phpvin.js reads this and puts it on every AJAX request. #}
+    <meta name="csrf-token" content="{{ csrf_token }}">
+
+    <title>{% block title %}phpvin{% endblock %}</title>
+    <style>
+        :root { color-scheme: light dark; --bg:#fafafa; --fg:#18181b; --muted:#71717a;
+                --line:#e4e4e7; --accent:#2563eb; --bad:#dc2626; --good:#16a34a; --card:#fff; }
+        @media (prefers-color-scheme: dark) {
+            :root { --bg:#09090b; --fg:#fafafa; --muted:#a1a1aa; --line:#27272a;
+                    --accent:#60a5fa; --bad:#f87171; --good:#4ade80; --card:#18181b; }
+        }
+        * { box-sizing: border-box; }
+        body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.6 ui-sans-serif,system-ui,-apple-system,sans-serif; }
+        header { border-bottom:1px solid var(--line); }
+        nav { max-width:44rem; margin:0 auto; padding:1rem 1.5rem; display:flex; gap:1rem; align-items:center; }
+        nav .brand { font-weight:600; letter-spacing:-.02em; text-decoration:none; color:var(--fg); }
+        nav .spacer { margin-left:auto; }
+        main { max-width:44rem; margin:0 auto; padding:2.5rem 1.5rem; }
+        h1 { letter-spacing:-.03em; margin:0 0 .5rem; }
+        p.lede { color:var(--muted); margin-top:0; }
+        a { color:var(--accent); }
+        form { display:grid; gap:1rem; max-width:24rem; }
+        label { display:grid; gap:.35rem; font-size:.9rem; }
+        input { padding:.6rem .7rem; font:inherit; border:1px solid var(--line);
+                border-radius:.5rem; background:var(--card); color:var(--fg); }
+        input:focus { outline:2px solid var(--accent); outline-offset:1px; }
+        button { padding:.6rem 1rem; font:inherit; font-weight:500; border:0; border-radius:.5rem;
+                 background:var(--accent); color:#fff; cursor:pointer; justify-self:start; }
+        .error { color:var(--bad); font-size:.85rem; }
+        .hint { color:var(--muted); font-size:.8rem; }
+        .count { display:inline-block; min-width:1.5rem; padding:0 .4rem; border-radius:99px;
+                 background:var(--line); color:var(--muted); font-size:.9rem; text-align:center;
+                 vertical-align:middle; }
+        [data-error-for]:empty { display:none; }
+        input.is-invalid { border-color:var(--bad); }
+        h2 { margin-top:2.5rem; letter-spacing:-.02em; }
+        ul.notes { list-style:none; padding:0; margin:1.5rem 0 0; max-width:24rem; }
+        ul.notes li { display:flex; gap:1rem; align-items:center; padding:.6rem .8rem;
+                      border:1px solid var(--line); border-radius:.5rem; margin-bottom:.5rem; background:var(--card); }
+        ul.notes li span { flex:1; }
+        ul.notes li.empty { color:var(--muted); justify-content:center; border-style:dashed; }
+        a.remove { text-decoration:none; color:var(--muted); font-size:1.2rem; line-height:1; }
+        a.remove:hover { color:var(--bad); }
+        .flash { padding:.75rem 1rem; border-radius:.5rem; margin-bottom:1.5rem; border:1px solid var(--line); background:var(--card); }
+        .flash.success { border-color:var(--good); }
+        .flash.error { border-color:var(--bad); }
+        .inline { display:inline; }
+        .linkish { background:none; color:var(--accent); padding:0; font-weight:400; text-decoration:underline; }
+    </style>
+</head>
+<body>
+<header>
+    <nav>
+        <a class="brand" href="{{ route('home') }}">phpvin</a>
+        <span class="spacer"></span>
+        {% if user %}
+            <a href="{{ route('dashboard') }}">Dashboard</a>
+            <form method="post" action="{{ route('logout') }}" class="inline">
+                <input type="hidden" name="_token" value="{{ csrf_token }}">
+                <button type="submit" class="linkish">Sign out</button>
+            </form>
+        {% else %}
+            <a href="{{ route('login') }}">Sign in</a>
+            <a href="{{ route('register') }}">Register</a>
+        {% endif %}
+    </nav>
+</header>
+
+<main>
+    {% for type, message in flash %}
+        <div class="flash {{ type }}">{{ message }}</div>
+    {% endfor %}
+
+    {% block content %}{% endblock %}
+</main>
+
+<script src="{{ asset('js/jquery.min.js') }}"></script>
+<script src="{{ route('phpvin.script') }}"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

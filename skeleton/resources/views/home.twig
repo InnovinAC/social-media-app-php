@@ -1,0 +1,19 @@
+{% extends 'layout.twig' %}
+
+{% block title %}phpvin{% endblock %}
+
+{% block content %}
+    <h1>It runs.</h1>
+    <p class="lede">
+        This page came from <code>HomeController::index</code>, which was handed a
+        <code>ViewFactory</code> by the container because it asked for one in its constructor.
+    </p>
+
+    <p>Things worth opening next:</p>
+    <ul>
+        <li><code>routes/web.php</code>: every route, configured with named arguments</li>
+        <li><code>app/Controllers</code>: controllers that return responses instead of echoing</li>
+        <li><code>config.php</code>: the whole configuration, in one array</li>
+        <li><a href="{{ route('api.health') }}">/api/health</a>: a JSON endpoint in the same app</li>
+    </ul>
+{% endblock %}

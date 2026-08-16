@@ -1,0 +1,80 @@
+{% extends 'layout.twig' %}
+
+{% block title %}Dashboard{% endblock %}
+
+{% block content %}
+    <h1>Dashboard</h1>
+    <p class="lede">Signed in as {{ signedInAs }}.</p>
+
+    <h2>Notes <span class="count" id="note-count">{{ notes|length }}</span></h2>
+
+    <p class="lede">
+        One round trip updates four places: the list, the empty state, the
+        counter, and the focus. The controller returns a <code>Commands</code>
+        list; no JavaScript on this page makes that happen.
+    </p>
+
+    <form method="post"
+          action="{{ route('notes.store') }}"
+          data-remote
+          data-target="#notes">
+        <input type="hidden" name="_token" value="{{ csrf_token }}">
+
+        <label>
+            <input type="text"
+                   name="body"
+                   placeholder="Write a note"
+                   maxlength="200"
+                   data-behavior="char-counter"
+                   data-output="#chars"
+                   data-max="200"
+                   required>
+            <span class="hint" id="chars"></span>
+            <span class="error" data-error-for="body"></span>
+        </label>
+
+        <button type="submit" data-disable-with="Saving…">Add note</button>
+    </form>
+
+    <ul id="notes" class="notes">
+        {% for note in notes %}
+            {% include 'notes/row.twig' %}
+        {% else %}
+            <li class="empty" id="empty-state">Nothing yet.</li>
+        {% endfor %}
+    </ul>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// A behaviour. Bound to every [data-behavior="char-counter"] on the page,
+// including elements that arrive later in a response.
+phpvin.behavior('char-counter', function ($input, data) {
+    var $output = $(data.output);
+
+    function count() {
+        $output.text($input.val().length + ' / ' + data.max);
+    }
+
+    $input.on('input.counter', count);
+    count();
+
+    // Runs when jQuery removes the element, including after a swap.
+    return { destroy: function () { $input.off('.counter'); } };
+});
+
+// A command. The server can now invoke this by name:
+//   Commands::make()->call('highlight', ['selector' => '#notes li:first'])
+phpvin.command('highlight', function (args) {
+    $(args.selector).css('transition', 'background-color .6s')
+                    .css('background-color', 'rgba(37,99,235,.25)');
+
+    setTimeout(function () { $(args.selector).css('background-color', ''); }, 600);
+});
+
+// Events the server fired with ->trigger().
+$(document).on('note:added', function (event, detail) {
+    phpvin.commands.highlight({ selector: '#note-' + detail.id });
+});
+</script>
+{% endblock %}

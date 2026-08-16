@@ -1,4 +1,8 @@
-node_modules
-dist
+.git
+.github
 vendor
+.phpunit.cache
 .env
+*.sqlite
+.DS_Store
+.idea

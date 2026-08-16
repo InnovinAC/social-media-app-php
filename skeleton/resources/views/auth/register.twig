@@ -1,0 +1,38 @@
+{% extends 'layout.twig' %}
+
+{% block title %}Register{% endblock %}
+
+{% block content %}
+    <h1>Create an account</h1>
+
+    <form method="post" action="{{ route('register') }}">
+        <input type="hidden" name="_token" value="{{ csrf_token }}">
+
+        <label>
+            Name
+            <input type="text" name="name" value="{{ old.name|default('') }}" required autofocus>
+            {% if errors.name is defined %}<span class="error">{{ errors.name|first }}</span>{% endif %}
+        </label>
+
+        <label>
+            Email
+            <input type="email" name="email" value="{{ old.email|default('') }}" required>
+            {% if errors.email is defined %}<span class="error">{{ errors.email|first }}</span>{% endif %}
+        </label>
+
+        <label>
+            Password
+            <input type="password" name="password" required minlength="12">
+            {% if errors.password is defined %}<span class="error">{{ errors.password|first }}</span>{% endif %}
+        </label>
+
+        <label>
+            Confirm password
+            <input type="password" name="password_confirmation" required minlength="12">
+        </label>
+
+        <button type="submit">Create account</button>
+    </form>
+
+    <p>Already registered? <a href="{{ route('login') }}">Sign in</a>.</p>
+{% endblock %}
