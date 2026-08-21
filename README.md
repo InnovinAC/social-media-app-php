@@ -167,7 +167,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Testing
 
-748 tests. They run against SQLite by default, nothing to install, and the
+771 tests. They run against SQLite by default (nothing to install), and the
 same suite runs against MySQL 8 and Postgres 16, because the interesting bugs
 only exist on a database you did not develop on. Postgres rejects the backticks
 MySQL requires; MySQL commits implicitly on DDL and hands back every column as a
@@ -178,7 +178,7 @@ make db-up && make test-drivers
 ```
 
 The suite is also mutation tested: `bin/mutate` breaks the source one edit at a
-time and checks the tests notice. **505 mutants, 100% killed** across the three
+time and checks the tests notice. **508 mutants, 100% killed** across the three
 drivers. That number is the one worth trusting; a passing suite only proves the
 tests ran.
 
@@ -294,9 +294,9 @@ what has moved.
 "Battle-tested" gets used for two different things, and it is worth being
 precise about which one this has.
 
-The first is engineering rigour, and that is measurable. Every merge runs 748
+The first is engineering rigour, and that is measurable. Every merge runs 771
 tests against SQLite, MySQL 8 and Postgres 16, on PHP 8.2, 8.3 and 8.4. Every
-mutant of the source, 505 of them, is killed by the suite on all three
+mutant of the source (508 of them) is killed by the suite on all three
 drivers, which means there is no line you can silently change and still go
 green. PHPStan runs at level 6. `bin/package-check` builds the distribution the
 way `.gitattributes` says it ships, installs it as a real copy rather than a
@@ -310,12 +310,20 @@ the encryption tests walk every bit of every sealed payload (nonce, tag and
 ciphertext), flip it, and require all of them to fail to open. One position
 that still opened would be precisely the one worth attacking.
 
+Some tests spawn real processes rather than exercising the code in one. A
+single-process suite runs each operation to completion before starting the
+next, which is the one condition under which a read-modify-write race cannot
+happen. Serial tests tell you nothing about concurrency. The rate limiter
+shipped such a race, and sixty concurrent attempts counted as six.
+
 That regime finds real defects rather than decorating passing tests. The query
 builder was wholly broken on Postgres. Transaction depth desynced on MySQL.
 `false` bound as an empty string. A blank `APP_KEY` turned every request into a
 500. A template name from a URL could walk out of the view directory and be
-executed. Each of those was caught here, before a release, by a check in that
-list.
+executed. The rate limiter lost attempts to a race, so a limit of five admitted
+about fifty to anyone sending requests in parallel. An aggregate over a grouped
+query named a table the subquery had put out of scope. Each of those was caught
+here, before a release, by a check in that list.
 
 The second meaning is production years: a thousand applications finding the
 edges you did not think of, a decade of CVEs teaching the framework where its
