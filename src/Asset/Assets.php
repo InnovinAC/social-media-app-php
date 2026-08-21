@@ -58,7 +58,7 @@ final class Assets
      */
     public static function publish(string $targetDirectory): string
     {
-        if (! is_dir($targetDirectory) && ! mkdir($targetDirectory, 0o755, true) && ! is_dir($targetDirectory)) {
+        if (! is_dir($targetDirectory) && ! mkdir($targetDirectory, 0o755, true) && ! is_dir($targetDirectory)) { // mutation:ignore race guard: another process creating the directory first
             throw new RuntimeException("Could not create [$targetDirectory].");
         }
 

@@ -185,7 +185,7 @@ final class Request
 
     public function isReading(): bool
     {
-        return in_array($this->method, ['GET', 'HEAD', 'OPTIONS'], true);
+        return in_array($this->method, ['GET', 'HEAD', 'OPTIONS'], true); // mutation:ignore strict flag is equivalent for an array of string literals
     }
 
     public function isAjax(): bool
@@ -258,7 +258,7 @@ final class Request
 
         $override = strtoupper((string) ($body['_method'] ?? ''));
 
-        return in_array($override, ['PUT', 'PATCH', 'DELETE'], true) ? $override : 'POST';
+        return in_array($override, ['PUT', 'PATCH', 'DELETE'], true) ? $override : 'POST'; // mutation:ignore strict flag is equivalent for an array of string literals
     }
 
     /**
@@ -277,7 +277,7 @@ final class Request
             if (str_starts_with($key, 'HTTP_')) {
                 $name = strtolower(str_replace('_', '-', substr($key, 5)));
                 $headers[$name] = (string) $value;
-            } elseif (in_array($key, ['CONTENT_TYPE', 'CONTENT_LENGTH'], true)) {
+            } elseif (in_array($key, ['CONTENT_TYPE', 'CONTENT_LENGTH'], true)) { // mutation:ignore strict flag is equivalent for an array of string literals
                 $headers[strtolower(str_replace('_', '-', $key))] = (string) $value;
             }
         }

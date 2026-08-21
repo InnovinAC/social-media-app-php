@@ -180,7 +180,91 @@ final class ContainerTest extends TestCase
         $container = new Container();
 
         $this->assertTrue($container->has(Logger::class));
-        $this->assertFalse($container->has('App\\Nope'));
+        $this->assertFalse($container->has('Nothing\\AtAll'));
+    }
+
+    #[Test]
+    public function has_is_true_for_a_binding_that_has_never_been_resolved(): void
+    {
+        $container = new Container();
+        $container->bind('config.timeout', fn (): int => 30);
+
+        // Nothing has called get() yet, so this only passes if has() consults
+        // the bindings and not just what happens to be memoised.
+        $this->assertTrue($container->has('config.timeout'));
+    }
+
+    #[Test]
+    public function has_is_true_for_a_registered_instance(): void
+    {
+        $container = new Container();
+        $container->instance('config.name', 'phpvin');
+
+        $this->assertTrue($container->has('config.name'));
+    }
+
+    #[Test]
+    public function an_explicit_bind_is_not_shared_unless_asked(): void
+    {
+        $container = new Container();
+        $container->bind(Logger::class, fn (): Logger => new Logger());
+
+        // bind() defaults to a fresh instance time; singleton() is the opt-in.
+        $this->assertNotSame($container->get(Logger::class), $container->get(Logger::class));
+    }
+
+    #[Test]
+    public function a_non_string_override_is_passed_through_untouched(): void
+    {
+        $container = new Container();
+
+        // Coercion exists for route parameters, which are always strings.
+        // An int that is already an int must not be run through it.
+        $this->assertSame(42, $container->call(fn (int $id) => $id, ['id' => 42]));
+        $this->assertSame(1.5, $container->call(fn (float $n) => $n, ['n' => 1.5]));
+    }
+
+    #[Test]
+    public function a_string_override_for_a_class_parameter_is_left_alone(): void
+    {
+        $container = new Container();
+
+        $this->assertSame(
+            'raw',
+            $container->call(fn (?Logger $logger, string $note) => $note, ['note' => 'raw']),
+        );
+    }
+
+    #[Test]
+    public function a_string_override_for_an_untyped_parameter_is_passed_through(): void
+    {
+        $container = new Container();
+
+        // A closure route handler often has no type hints at all. There is no
+        // ReflectionNamedType to ask about, so coercion has to bail out before
+        // it tries.
+        $this->assertSame('text', $container->call(fn ($thing) => $thing, ['thing' => 'text']));
+        $this->assertSame('42', $container->call(fn ($id) => $id, ['id' => '42']), 'untyped stays a string');
+    }
+
+    #[Test]
+    public function the_unresolvable_message_distinguishes_a_missing_type_from_a_builtin(): void
+    {
+        $container = new Container();
+
+        try {
+            $container->call(fn (string $dsn) => $dsn);
+            $this->fail('Expected a ContainerException.');
+        } catch (ContainerException $e) {
+            $this->assertStringContainsString('built-in type', $e->getMessage());
+        }
+
+        try {
+            $container->call(fn ($whatever) => $whatever);
+            $this->fail('Expected a ContainerException.');
+        } catch (ContainerException $e) {
+            $this->assertStringContainsString('no type hint', $e->getMessage());
+        }
     }
 }
 

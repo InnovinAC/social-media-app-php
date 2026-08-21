@@ -184,3 +184,25 @@ jobs:
           curl -sf http://localhost:8000/ > /dev/null
           curl -sf http://localhost:8000/api/health | grep -q '"status":"ok"'
           curl -sf http://localhost:8000/_phpvin/phpvin.js > /dev/null
+
+  # Slow (a few minutes) and only meaningful once the suite is green, so it
+  # runs on its own rather than blocking every other job.
+  mutation:
+    runs-on: ubuntu-latest
+    name: Framework / mutation testing
+    needs: [test]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: pdo, pdo_sqlite
+          coverage: none
+
+      - run: composer install --prefer-dist --no-interaction --no-progress
+
+      # A mutant that only dies on MySQL or Postgres cannot be killed here, so
+      # the bar is set below 100 for the SQLite-only run.
+      - run: ./bin/mutate --min=97

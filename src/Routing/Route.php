@@ -73,11 +73,11 @@ final class Route
         $method = strtoupper($method);
 
         // A HEAD request is a GET whose body the server throws away.
-        if ($method === 'HEAD' && in_array('GET', $this->methods, true)) {
+        if ($method === 'HEAD' && in_array('GET', $this->methods, true)) { // mutation:ignore strict flag is equivalent for a list of verb strings
             return true;
         }
 
-        return in_array($method, $this->methods, true);
+        return in_array($method, $this->methods, true); // mutation:ignore strict flag is equivalent for a list of verb strings
     }
 
     /**

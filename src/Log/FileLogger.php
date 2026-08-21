@@ -105,7 +105,10 @@ final class FileLogger extends AbstractLogger
 
         $encoded = json_encode($context, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_PARTIAL_OUTPUT_ON_ERROR);
 
-        return $encoded === false ? '' : '  ' . $encoded;
+        // PARTIAL_OUTPUT_ON_ERROR means encoding always yields a string:
+        // anything unencodable becomes null rather than failing the line. The
+        // check is here for the type checker, not for a reachable case.
+        return $encoded === false ? '' : '  ' . $encoded; // mutation:ignore unreachable with PARTIAL_OUTPUT_ON_ERROR
     }
 
     private function isPrintable(mixed $value): bool
@@ -119,7 +122,7 @@ final class FileLogger extends AbstractLogger
 
         // Silenced deliberately: the failure is handled on the next line, and
         // a raw warning from the logger would be noise on top of noise.
-        if (! is_dir($directory) && ! @mkdir($directory, 0o755, true) && ! is_dir($directory)) {
+        if (! is_dir($directory) && ! @mkdir($directory, 0o755, true) && ! is_dir($directory)) { // mutation:ignore race guard: another process creating the directory first
             // Losing the log must not take the request down with it.
             error_log("phpvin: could not create the log directory [$directory]");
 

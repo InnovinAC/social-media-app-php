@@ -96,3 +96,13 @@ test-drivers:
 		printf '\n== %s ==\n' "$$d"; \
 		DB_DRIVER=$$d ./vendor/bin/phpunit || exit 1; \
 	done
+
+.PHONY: mutate mutate-drivers
+
+# Breaks the source one edit at a time and reruns the suite. A surviving mutant
+# is a line that could be wrong with every test still green.
+mutate:
+	@./bin/mutate
+
+mutate-drivers:
+	@./bin/mutate --drivers=sqlite,mysql,pgsql

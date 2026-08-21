@@ -366,7 +366,7 @@ abstract class Model implements JsonSerializable
 
         $id = static::query()->insert($this->forStorage($this->attributes), static::$primaryKey);
 
-        if (! isset($this->attributes[static::$primaryKey]) && $id !== '' && $id !== '0') {
+        if (! isset($this->attributes[static::$primaryKey]) && self::looksLikeAKey($id)) {
             $this->attributes[static::$primaryKey] = is_numeric($id) ? (int) $id : $id;
         }
 
@@ -374,6 +374,18 @@ abstract class Model implements JsonSerializable
         $this->exists = true;
 
         return true;
+    }
+
+    /**
+     * Whether the driver actually reported a new key.
+     *
+     * MySQL returns '0' from lastInsertId() for a table with no auto-increment
+     * column, and some drivers report an empty string. Neither is a key, and
+     * storing one would make the model think it knows its own identity.
+     */
+    private static function looksLikeAKey(string $id): bool
+    {
+        return $id !== '' && $id !== '0';
     }
 
     public function delete(): bool

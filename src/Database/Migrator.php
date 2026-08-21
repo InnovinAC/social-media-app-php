@@ -78,7 +78,7 @@ final class Migrator
         $pending = [];
 
         foreach ($this->files() as $name => $file) {
-            if (! in_array($name, $done, true)) {
+            if (! in_array($name, $done, true)) { // mutation:ignore strict flag is equivalent for an array of string literals
                 $pending[$name] = $file;
             }
         }

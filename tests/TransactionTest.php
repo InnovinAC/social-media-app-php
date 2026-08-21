@@ -136,6 +136,33 @@ final class TransactionTest extends DatabaseTestCase
     }
 
     #[Test]
+    public function a_begin_after_the_driver_committed_behind_us_starts_fresh(): void
+    {
+        $this->db->beginTransaction();
+
+        // Exactly what MySQL does when it meets DDL, reproduced here on every
+        // driver so the recovery path is not MySQL-only guesswork.
+        $this->db->pdo()->commit();
+
+        $this->assertSame(1, $this->db->transactionDepth(), 'our counter has not noticed yet');
+        $this->assertFalse($this->db->inTransaction());
+
+        $this->db->beginTransaction();
+
+        // The depth is the tell: a fresh transaction resets it to one. Nesting
+        // a savepoint on top of nothing would leave it at two, and the next
+        // commit would release a savepoint that was never taken.
+        $this->assertSame(1, $this->db->transactionDepth(), 'it started over rather than nesting');
+        $this->assertTrue($this->db->inTransaction());
+
+        $this->insert('after the surprise commit');
+        $this->db->commit();
+
+        $this->assertSame(0, $this->db->transactionDepth());
+        $this->assertSame(1, $this->rows());
+    }
+
+    #[Test]
     public function a_php_bool_binding_survives_every_driver(): void
     {
         $this->createTable('flags', ['id' => 'id', 'live' => 'bool']);

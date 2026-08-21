@@ -224,7 +224,7 @@ final class QueryBuilder
     {
         $type = strtolower($type);
 
-        if (! in_array($type, self::JOIN_TYPES, true)) {
+        if (! in_array($type, self::JOIN_TYPES, true)) { // mutation:ignore strict flag is equivalent for an array of string literals
             throw new InvalidArgumentException(sprintf(
                 'Join type must be one of: %s. Got [%s].',
                 implode(', ', self::JOIN_TYPES),
@@ -232,7 +232,7 @@ final class QueryBuilder
             ));
         }
 
-        if (! in_array($operator, ['=', '!=', '<>', '<', '<=', '>', '>='], true)) {
+        if (! in_array($operator, ['=', '!=', '<>', '<', '<=', '>', '>='], true)) { // mutation:ignore strict flag is equivalent for an array of string literals
             throw new InvalidArgumentException("Unsupported join operator [$operator].");
         }
 
@@ -285,7 +285,7 @@ final class QueryBuilder
     {
         $direction = strtolower($direction);
 
-        if (! in_array($direction, ['asc', 'desc'], true)) {
+        if (! in_array($direction, ['asc', 'desc'], true)) { // mutation:ignore strict flag is equivalent for an array of string literals
             throw new InvalidArgumentException("Order direction must be asc or desc, got [$direction].");
         }
 
@@ -343,7 +343,9 @@ final class QueryBuilder
 
         $models = array_map($this->modelClass::hydrate(...), $rows);
 
-        if ($this->with !== [] && $models !== []) {
+        // eagerLoad() returns early on an empty list, so there is nothing to
+        // check here beyond whether anything was requested.
+        if ($this->with !== []) {
             $this->modelClass::eagerLoad($models, $this->with);
         }
 
@@ -620,7 +622,7 @@ final class QueryBuilder
     {
         $normalised = strtolower(trim($operator));
 
-        if (! in_array($normalised, self::OPERATORS, true)) {
+        if (! in_array($normalised, self::OPERATORS, true)) { // mutation:ignore strict flag is equivalent for an array of string literals
             throw new InvalidArgumentException(sprintf(
                 'Unsupported operator [%s]. Use one of: %s.',
                 $operator,
