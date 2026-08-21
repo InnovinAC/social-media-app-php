@@ -129,6 +129,21 @@ class Response
         return $this->cookies;
     }
 
+    /**
+     * Replace a queued cookie's value in place.
+     *
+     * Used by EncryptCookies, which seals values after the controller has set
+     * them so nothing downstream has to remember to.
+     */
+    public function replaceCookie(int $index, string $value): static
+    {
+        if (isset($this->cookies[$index])) {
+            $this->cookies[$index]['value'] = $value;
+        }
+
+        return $this;
+    }
+
     public function isRedirect(): bool
     {
         return $this->status >= 300 && $this->status < 400;

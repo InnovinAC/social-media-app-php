@@ -6,6 +6,7 @@ namespace Phpvin;
 
 use Closure;
 use Phpvin\Container\Container;
+use Phpvin\Crypto\Encrypter;
 use Phpvin\Http\Commands;
 use Phpvin\Http\ExceptionHandler;
 use Phpvin\Http\JsonResponse;
@@ -238,6 +239,7 @@ final class Application
 
         if ($this->usesSession()) {
             $session = $this->container->get(Session::class);
+            $session->useCookieOptions((array) $this->config('session_cookie', []));
             $session->start();
         }
 
@@ -290,6 +292,16 @@ final class Application
                 $c->get(Router::class),
                 (string) $this->config('base_url', ''),
                 (string) $this->config('asset_url', ''),
+            ),
+        );
+
+        $this->container->singleton(
+            Encrypter::class,
+            fn (): Encrypter => Encrypter::fromKey(
+                (string) ($this->config('key') ?? throw new RuntimeException(
+                    'No encryption key is configured. Generate one with '
+                    . 'Phpvin\\Crypto\\Encrypter::generateKey() and set it as `key` in your config.',
+                )),
             ),
         );
 
@@ -383,6 +395,19 @@ final class Application
             'debug' => false,
             'base_url' => '',
             'session' => true,
+
+            // Hardened by default; set `secure` once you are on HTTPS.
+            'session_cookie' => [
+                'httponly' => true,
+                'samesite' => 'Lax',
+                'secure' => false,
+                'path' => '/',
+            ],
+
+            // No default: an encryption key that ships with the framework is
+            // not a key. Encrypter is only built if something asks for it.
+            'key' => null,
+
             'database' => null,
 
             // Referenced by name so the core never hard-depends on the

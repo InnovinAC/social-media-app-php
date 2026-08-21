@@ -7,12 +7,14 @@ namespace Phpvin\Tests;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 use Phpvin\Application;
+use Phpvin\Console\Commands\KeyGenerateCommand;
 use Phpvin\Console\Commands\MakeCommand;
 use Phpvin\Console\Commands\MigrateCommand;
 use Phpvin\Console\Commands\RouteListCommand;
 use Phpvin\Console\Commands\ServeCommand;
 use Phpvin\Console\Input;
 use Phpvin\Console\Output;
+use Phpvin\Crypto\Encrypter;
 use Phpvin\Database\Connection;
 use Phpvin\Database\Migrator;
 use Phpvin\Database\Model;
@@ -309,6 +311,84 @@ final class ConsoleCommandsTest extends TestCase
         (new RouteListCommand($app->router()))->run($this->input(['route:list']), $this->output);
 
         $this->assertStringContainsString('Closure', $this->printed());
+    }
+
+    // --- key:generate -----------------------------------------------------------
+
+    #[Test]
+    public function key_generate_show_prints_a_usable_key(): void
+    {
+        $exit = (new KeyGenerateCommand($this->app()))->run($this->input(['key:generate', '--show']), $this->output);
+
+        $key = trim($this->printed());
+
+        $this->assertSame(0, $exit);
+        $this->assertStringStartsWith('base64:', $key);
+
+        // Not just well-formed: it has to actually work.
+        $encrypter = Encrypter::fromKey($key);
+        $this->assertSame('round trip', $encrypter->decrypt($encrypter->encrypt('round trip')));
+    }
+
+    #[Test]
+    public function key_generate_writes_into_an_env_file(): void
+    {
+        $env = $this->base . '/.env';
+        file_put_contents($env, "APP_DEBUG=true\nAPP_KEY=\n");
+
+        $exit = (new KeyGenerateCommand($this->app()))->run($this->input(['key:generate']), $this->output);
+
+        $this->assertSame(0, $exit);
+        $this->assertMatchesRegularExpression('/^APP_KEY=base64:\S+$/m', (string) file_get_contents($env));
+        $this->assertStringContainsString('APP_DEBUG=true', (string) file_get_contents($env), 'the rest is untouched');
+    }
+
+    #[Test]
+    public function key_generate_appends_when_there_is_no_app_key_line(): void
+    {
+        $env = $this->base . '/.env';
+        file_put_contents($env, "APP_DEBUG=true\n");
+
+        (new KeyGenerateCommand($this->app()))->run($this->input(['key:generate']), $this->output);
+
+        $this->assertMatchesRegularExpression('/^APP_KEY=base64:\S+$/m', (string) file_get_contents($env));
+    }
+
+    #[Test]
+    public function key_generate_refuses_to_replace_a_live_key(): void
+    {
+        $env = $this->base . '/.env';
+        file_put_contents($env, "APP_KEY=base64:existingkeyvalue\n");
+
+        $exit = (new KeyGenerateCommand($this->app()))->run($this->input(['key:generate']), $this->output);
+
+        // Replacing it makes every sealed value unreadable, so it needs more
+        // than a stray keystroke.
+        $this->assertSame(1, $exit);
+        $this->assertStringContainsString('already set', $this->printed());
+        $this->assertStringContainsString('base64:existingkeyvalue', (string) file_get_contents($env));
+    }
+
+    #[Test]
+    public function key_generate_replaces_a_live_key_when_forced(): void
+    {
+        $env = $this->base . '/.env';
+        file_put_contents($env, "APP_KEY=base64:existingkeyvalue\n");
+
+        $exit = (new KeyGenerateCommand($this->app()))->run($this->input(['key:generate', '--force']), $this->output);
+
+        $this->assertSame(0, $exit);
+        $this->assertStringNotContainsString('existingkeyvalue', (string) file_get_contents($env));
+    }
+
+    #[Test]
+    public function key_generate_prints_the_key_when_there_is_no_env_file(): void
+    {
+        $exit = (new KeyGenerateCommand($this->app()))->run($this->input(['key:generate']), $this->output);
+
+        $this->assertSame(0, $exit);
+        $this->assertStringContainsString('No .env at', $this->printed());
+        $this->assertStringContainsString('base64:', $this->printed());
     }
 
     // --- serve --------------------------------------------------------------------

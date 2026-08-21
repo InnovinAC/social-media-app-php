@@ -223,6 +223,25 @@ final class Request
     }
 
     /**
+     * @param array<string, string> $cookies
+     */
+    public function withCookies(array $cookies): self
+    {
+        return new self(
+            method: $this->method,
+            path: $this->path,
+            query: $this->query,
+            body: $this->body,
+            cookies: $cookies,
+            files: $this->files,
+            server: $this->server,
+            headers: $this->headers,
+            routeParameters: $this->routeParameters,
+            session: $this->session,
+        );
+    }
+
+    /**
      * @param array<string, string> $parameters
      */
     public function withRouteParameters(array $parameters): self

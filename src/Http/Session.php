@@ -22,6 +22,24 @@ class Session
     private bool $started = false;
 
     /**
+     * Cookie settings applied when a real session is started.
+     *
+     * The defaults are the safe ones: unreadable from JavaScript, not sent on
+     * cross-site requests, and, once you set `secure`, never over plain HTTP.
+     * A session cookie readable by script is one XSS away from a stolen
+     * account, so this is not left to whatever php.ini happens to say.
+     *
+     * @var array<string, mixed>
+     */
+    private array $cookieOptions = [
+        'httponly' => true,
+        'samesite' => 'Lax',
+        'secure' => false,
+        'path' => '/',
+        'lifetime' => 0,
+    ];
+
+    /**
      * @param array<string, mixed>|null $store Pass an array to run detached
      *                                         from PHP's session handler.
      */
@@ -34,6 +52,17 @@ class Session
         }
     }
 
+    /**
+     * Override the session cookie settings. Call before start().
+     *
+     * @param array<string, mixed> $options Any of httponly, samesite, secure,
+     *                                      path, domain, lifetime.
+     */
+    public function useCookieOptions(array $options): void
+    {
+        $this->cookieOptions = [...$this->cookieOptions, ...$options];
+    }
+
     public function start(): void
     {
         if ($this->started) {
@@ -41,6 +70,8 @@ class Session
         }
 
         if ($this->store === null && session_status() === PHP_SESSION_NONE) {
+            // Set before the cookie is issued; afterwards it has no effect.
+            session_set_cookie_params($this->cookieOptions);
             session_start();
         }
 

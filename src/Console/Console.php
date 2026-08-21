@@ -7,6 +7,7 @@ namespace Phpvin\Console;
 use InvalidArgumentException;
 use Phpvin\Application;
 use Phpvin\Console\Commands\AboutCommand;
+use Phpvin\Console\Commands\KeyGenerateCommand;
 use Phpvin\Console\Commands\MakeCommand;
 use Phpvin\Console\Commands\MigrateCommand;
 use Phpvin\Console\Commands\RouteListCommand;
@@ -33,6 +34,7 @@ final class Console
         RouteListCommand::class,
         MigrateCommand::class,
         MakeCommand::class,
+        KeyGenerateCommand::class,
         ServeCommand::class,
         AboutCommand::class,
     ];

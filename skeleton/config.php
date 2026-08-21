@@ -28,6 +28,10 @@ return [
 
     'base_url' => $_ENV['APP_URL'] ?? '',
 
+    // Seals cookies and anything else you hand to the Encrypter. Generate one
+    // with `./phpvin key:generate`, there is deliberately no default.
+    'key' => $_ENV['APP_KEY'] ?? null,
+
     // Left empty, asset() emits relative paths, which survive being reached on
     // a different host or port. Set it only when assets live on a CDN.
     'asset_url' => $_ENV['ASSET_URL'] ?? '',
@@ -46,6 +50,15 @@ return [
     'log' => [
         'path' => $_ENV['LOG_PATH'] ?? $root . '/storage/logs/app.log',
         'level' => $_ENV['LOG_LEVEL'] ?? 'info',
+    ],
+
+    // Hardened by default. Set APP_HTTPS once you are actually on HTTPS, and
+    // the session cookie stops travelling over plain HTTP.
+    'session_cookie' => [
+        'httponly' => true,
+        'samesite' => 'Lax',
+        'secure' => filter_var($_ENV['APP_HTTPS'] ?? false, FILTER_VALIDATE_BOOL),
+        'path' => '/',
     ],
 
     'rate_limit' => [
