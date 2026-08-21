@@ -126,6 +126,26 @@ abstract class Grammar
     }
 
     /**
+     * The advisory lock held for the duration of a migration run, or null
+     * where the driver has no such thing.
+     *
+     * Two application servers deploying at once both ask which migrations are
+     * pending, both get the same answer, and both run them. The outcome ranges
+     * from a duplicated data migration to a boot that simply fails: on MySQL,
+     * three of four simultaneous runs die on `CREATE TABLE ... already exists`,
+     * which in a rolling deploy is three instances that never come up.
+     *
+     * An advisory lock is the right shape because it belongs to the session
+     * rather than being written down: a process that crashes mid-migration
+     * drops its connection and the lock goes with it. A lock row in a table
+     * would outlive the crash and need a human to clear it.
+     */
+    public function migrationLock(): ?MigrationLock
+    {
+        return null;
+    }
+
+    /**
      * Whether INSERT can hand the new key straight back.
      *
      * Where it cannot, the driver's lastInsertId() is used instead.

@@ -215,9 +215,33 @@ return function (Connection $db): void {
 };
 ```
 
-Run them with `php database/migrate.php`. Each runs once inside a transaction
-and is recorded in a `migrations` table, so running twice is a no-op and a
-failure rolls back and stays pending.
+Run them with the console:
+
+```bash
+./phpvin migrate
+```
+
+Each runs once inside a transaction and is recorded in a `migrations` table, so
+running twice is a no-op and a failure stays pending.
+
+**On MySQL the transaction is not the whole story.** MySQL commits implicitly
+when it sees `CREATE`, `ALTER` or `DROP`, so a migration that fails halfway
+leaves the earlier statements applied and cannot be rolled back. The framework
+cannot fix that, only be honest about it: `./phpvin migrate` warns before it
+starts, and `Grammar::supportsTransactionalDdl()` tells you in code. Either
+way the migration is not recorded, so the retry runs it again, which is why a
+MySQL migration is best written to be re-runnable, or kept to one statement.
+
+**Deploying several servers at once is safe on MySQL and Postgres.** A run
+holds an advisory lock for its whole duration, so replicas booting together
+queue rather than racing: the first applies the migrations and the rest find
+nothing pending. The lock belongs to the connection, so a process killed
+mid-migration releases it by disconnecting. Waiting is bounded: if something
+else has held the lock too long the deploy fails with a message saying so,
+rather than hanging.
+
+SQLite has no advisory lock and is left unlocked, which matches how it is
+deployed: one machine, one writer.
 
 ## Debugging
 
