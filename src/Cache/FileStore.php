@@ -18,22 +18,45 @@ use stdClass;
  * Entries are written to a temporary file and renamed into place, because
  * rename is atomic on every filesystem that matters: a reader either sees the
  * old entry or the new one, never half of either.
+ *
+ * Reading a cache entry means unserialising it, and unserialising attacker
+ * chosen bytes is remote code execution wherever the installed classes happen
+ * to contain a usable gadget chain: the standard way a file-write bug
+ * anywhere on the box gets upgraded into running code. Give this a secret and
+ * every entry is authenticated on the way out, so only bytes this application
+ * wrote are ever handed to unserialize(). Application does that for you when
+ * an encryption key is configured.
  */
 final class FileStore implements CacheInterface
 {
+    /** Length of the hex MAC that prefixes an authenticated payload. */
+    private const MAC_LENGTH = 64;
+
     /** @var Closure(): int */
     private Closure $clock;
 
+    private readonly ?string $secret;
+
     /**
-     * @param (Closure(): int)|null $clock Where "now" comes from. Injectable
-     *                                     so a test can sit exactly on an
-     *                                     expiry boundary instead of sleeping.
+     * @param (Closure(): int)|null $clock  Where "now" comes from. Injectable
+     *                                      so a test can sit exactly on an
+     *                                      expiry boundary instead of sleeping.
+     * @param string|null           $secret Authenticates entries. Null keeps
+     *                                      the plain format, which is fine for
+     *                                      a cache nothing else can write to.
      */
     public function __construct(
         private readonly string $directory,
         ?Closure $clock = null,
+        ?string $secret = null,
     ) {
         $this->clock = $clock ?? static fn (): int => time();
+
+        // Derived rather than used directly, so the cache MAC key and whatever
+        // else the application key is doing cannot be played off each other.
+        $this->secret = $secret === null || $secret === ''
+            ? null
+            : hash_hmac('sha256', 'phpvin:cache:v1', $secret, true);
     }
 
     public function get(string $key, mixed $default = null): mixed
@@ -57,9 +80,15 @@ final class FileStore implements CacheInterface
             return $default;
         }
 
-        $payload = @unserialize(substr($contents, 10), ['allowed_classes' => true]);
+        $serialised = $this->verified($contents);
 
-        return $payload === false && substr($contents, 10) !== serialize(false) ? $default : $payload;
+        if ($serialised === null) {
+            return $default;
+        }
+
+        $payload = @unserialize($serialised, ['allowed_classes' => true]);
+
+        return $payload === false && $serialised !== serialize(false) ? $default : $payload;
     }
 
     public function set(string $key, mixed $value, null|int|DateInterval $ttl = null): bool
@@ -78,7 +107,8 @@ final class FileStore implements CacheInterface
         }
 
         $expires = $seconds === null ? 0 : ($this->clock)() + $seconds;
-        $contents = str_pad((string) $expires, 10, '0', STR_PAD_LEFT) . serialize($value);
+        $head = str_pad((string) $expires, 10, '0', STR_PAD_LEFT);
+        $contents = $head . $this->authenticate($head, serialize($value));
 
         $temporary = $this->pathFor($key) . '.' . bin2hex(random_bytes(4));
 
@@ -202,6 +232,43 @@ final class FileStore implements CacheInterface
      * Keys are hashed, so a key containing a slash or a name you would rather
      * not have on disk cannot become a path.
      */
+    /**
+     * The serialised payload, or null when it is not ours to trust.
+     */
+    private function verified(string $contents): ?string
+    {
+        $body = substr($contents, 10);
+
+        if ($this->secret === null) {
+            return $body;
+        }
+
+        $mac = substr($body, 0, self::MAC_LENGTH);
+        $serialised = substr($body, self::MAC_LENGTH);
+
+        // hash_equals, because a byte-at-a-time comparison leaks how much of a
+        // forged MAC was right, and a cache entry can be probed in a loop.
+        return hash_equals($this->expected(substr($contents, 0, 10), $serialised), $mac)
+            ? $serialised
+            : null;
+    }
+
+    private function authenticate(string $head, string $serialised): string
+    {
+        return $this->secret === null
+            ? $serialised
+            : $this->expected($head, $serialised) . $serialised;
+    }
+
+    /**
+     * Covers the expiry as well as the payload, so a stored entry cannot have
+     * its lifetime extended without invalidating the MAC.
+     */
+    private function expected(string $head, string $serialised): string
+    {
+        return hash_hmac('sha256', $head . $serialised, (string) $this->secret);
+    }
+
     private function pathFor(string $key): string
     {
         return rtrim($this->directory, '/') . '/' . hash('xxh128', $key) . '.cache';

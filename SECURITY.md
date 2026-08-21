@@ -38,6 +38,7 @@ table is meant to be checked against the code rather than believed.
 | Padding-oracle probing | closed | Every decryption failure returns the same message. |
 | Template path traversal | closed | `TemplatePath` contains every bundled engine to its root, lexically *and* by realpath. A `/page/{slug}` route cannot be walked out of the view directory. |
 | Response header injection | closed | `Response::header()` rejects CR, LF and NUL in values and non-token names, so a redirect built from input cannot append a second header. |
+| PHP object injection via the cache | closed when a key is set | Reading a cache entry means unserialising it, and a gadget chain turns any file-write bug on the box into code execution. `FileStore` authenticates entries with a key derived from the application key, so only bytes this application wrote reach `unserialize()`. Without a key the cache still works and this row does not apply, so set one. |
 | Upload path traversal | closed | `store()` passes any caller-supplied name through `basename()` and defaults to a generated one. |
 | Upload type confusion | closed | Type comes from sniffing the bytes, never the client's filename or `Content-Type`. |
 | Host header poisoning | closed by design | Absolute URLs come from a configured `baseUrl`. The framework never reads `Host` to build a link, so a poisoned one has nothing to poison. |
@@ -67,6 +68,8 @@ Worth knowing what you are and are not getting.
   or `Content-Type`, and are stored under a generated name.
 - Template names cannot escape the template root, on every bundled engine, so
   rendering `"pages/$slug"` from a route parameter is safe to write.
+- Cache entries are authenticated once a key is configured, so a file-write
+  bug elsewhere on the box cannot feed the cache a payload to unserialise.
 - Header values cannot carry a line break, so a `Location` built from user
   input cannot smuggle a second header.
 - 5xx messages and stack traces are withheld from the response unless `debug`
@@ -126,3 +129,7 @@ nothing on it tells you less than one that shows its work:
   executed. Closed in `e91f952`, along with the same flaw in `HtmlEngine`.
 - **Response header injection.** `Response::header()` accepted CRLF in values.
   Closed in `e91f952`.
+- **Unauthenticated cache payloads.** `FileStore` handed stored bytes straight
+  to `unserialize()`, so any file-write primitive elsewhere could be escalated
+  to code execution through a gadget chain. Entries are now authenticated with
+  a derived key.

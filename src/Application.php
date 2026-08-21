@@ -316,7 +316,10 @@ final class Application
             CacheInterface::class,
             fn (): CacheInterface => ($path = $this->config('cache.path')) === null
                 ? new ArrayStore()
-                : new FileStore((string) $path),
+                // The key authenticates cache entries, so a file-write bug
+                // elsewhere cannot feed this one a gadget chain to unserialise.
+                // Absent, the cache still works and says so in SECURITY.md.
+                : new FileStore((string) $path, secret: ((string) ($this->config('key') ?? '')) ?: null),
         );
 
         $this->container->singleton(

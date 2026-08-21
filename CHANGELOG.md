@@ -54,6 +54,16 @@ pre-1.0 caveat that the API may still move.
   NUL, and names are checked against the RFC 7230 token grammar. PHP's own
   `header()` drops such a call with a warning, which is a silently missing
   header rather than an error and covers only one SAPI path.
+- **Authenticated cache entries (pre-release).** Reading a cache entry means
+  unserialising it, and unserialising bytes an attacker chose is code execution
+  wherever the installed classes contain a usable gadget. This is the standard way a
+  file-write bug anywhere on a box gets upgraded into running code, and a
+  routine finding against other frameworks' cache directories. `FileStore` now
+  authenticates every entry with a key derived from the application key, so
+  only bytes the application wrote reach `unserialize()`. The MAC covers the
+  expiry too, so a stored entry cannot be given a longer life than it was
+  written with. Without a configured key the format is unchanged and the cache
+  behaves exactly as before.
 - **A threat model.** [SECURITY.md](SECURITY.md) now states, as a table,
   which attack classes the framework closes, which it hands you a tool for,
   and which are yours, including the ones it deliberately does not take on.
