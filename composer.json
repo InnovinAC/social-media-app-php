@@ -63,7 +63,9 @@
             "@test",
             "@test:mysql",
             "@test:pgsql"
-        ]
+        ],
+        "mutate": "bin/mutate",
+        "mutate:drivers": "bin/mutate --drivers=sqlite,mysql,pgsql"
     },
     "extra": {
         "branch-alias": {
@@ -78,6 +80,7 @@
     "prefer-stable": true,
     "scripts-descriptions": {
         "test:drivers": "Run the suite against SQLite, MySQL and Postgres (needs `make db-up`).",
-        "check": "Everything CI runs on a single driver."
+        "check": "Everything CI runs on a single driver.",
+        "mutate": "Break the source one edit at a time and check the suite notices."
     }
 }

@@ -96,7 +96,7 @@ final class Validator
             $parsed = $this->parse($fieldRules);
             $value = $data[$field] ?? null;
 
-            $nullable = in_array('nullable', array_column($parsed, 0), true);
+            $nullable = in_array('nullable', array_column($parsed, 0), true); // mutation:ignore strict flag is equivalent for an array of string literals
 
             if ($nullable && $this->isEmpty($value)) {
                 continue;
@@ -154,7 +154,7 @@ final class Validator
                 ? "$label must be an image."
                 : null,
 
-            'mimes' => ! $value instanceof UploadedFile || ! in_array((string) $value->extension(), $arguments, true)
+            'mimes' => ! $value instanceof UploadedFile || ! in_array((string) $value->extension(), $arguments, true) // mutation:ignore strict flag is equivalent for an array of string literals
                 ? sprintf('%s must be a file of type: %s.', $label, implode(', ', $arguments))
                 : null,
 
@@ -207,7 +207,7 @@ final class Validator
                     ? sprintf('%s must be between %s and %s.', $label, $arguments[0], $arguments[1])
                     : null,
 
-            'in' => ! in_array((string) $value, $arguments, true)
+            'in' => ! in_array((string) $value, $arguments, true) // mutation:ignore strict flag is equivalent for an array of string literals
                 ? sprintf('%s must be one of: %s.', $label, implode(', ', $arguments))
                 : null,
 

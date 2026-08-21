@@ -30,6 +30,31 @@ composer check
 That runs the three things CI runs: code style, PHPStan at level 6, and the test
 suite. All three must pass. `composer style:fix` applies the style rules for you.
 
+### Mutation testing
+
+A green suite proves the tests ran, not that they would notice if the code
+broke. `bin/mutate` breaks the source one edit at a time (flipping a
+comparison, inverting a boolean) and reruns the suite. A mutant that survives
+is a line that could be wrong with every test still passing.
+
+```bash
+composer mutate                 # against SQLite
+make db-up && make mutate-drivers   # against all three
+```
+
+The bar is 100% across the driver matrix. That is stricter than it sounds,
+because coverage is driver-dependent: a branch that only differs on Postgres
+cannot be killed by a SQLite run. When a mutant survives, one of three things
+is true, in rough order of likelihood:
+
+1. **A test is missing.** Write it.
+2. **The mutant is equivalent.** The edit is real but cannot change behaviour.
+   Mark the line `// mutation:ignore <reason>`. The reason is not optional.
+3. **The code is dead.** Delete it. Several survivors turned out to be
+   redundant guards and unreachable fallbacks.
+
+### Packaging
+
 There is a fourth check worth running when you touch anything outside `src/`:
 
 ```bash

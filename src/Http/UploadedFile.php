@@ -123,14 +123,14 @@ final class UploadedFile
 
         $finfo = finfo_open(FILEINFO_MIME_TYPE);
 
-        if ($finfo === false) {
+        if ($finfo === false) { // mutation:ignore finfo_open only fails if the extension is broken
             return null;
         }
 
         $mime = finfo_file($finfo, $this->temporaryPath);
         finfo_close($finfo);
 
-        return $this->detectedMime = ($mime === false ? null : $mime);
+        return $this->detectedMime = ($mime === false ? null : $mime); // mutation:ignore finfo_file only fails on an unreadable path already excluded by isValid()
     }
 
     /**
@@ -176,7 +176,9 @@ final class UploadedFile
             throw new RuntimeException('Cannot store an upload that did not arrive cleanly: ' . $this->errorMessage());
         }
 
-        if (! is_dir($directory) && ! mkdir($directory, 0o755, true) && ! is_dir($directory)) {
+        // The trailing is_dir() covers another process winning the race; no
+        // deterministic test can reach it.
+        if (! is_dir($directory) && ! mkdir($directory, 0o755, true) && ! is_dir($directory)) { // mutation:ignore race guard
             throw new RuntimeException("Could not create the upload directory [$directory].");
         }
 

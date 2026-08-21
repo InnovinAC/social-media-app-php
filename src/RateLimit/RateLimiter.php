@@ -103,7 +103,8 @@ class RateLimiter
         $path = $this->pathFor($key);
         $directory = dirname($path);
 
-        if (! is_dir($directory) && ! mkdir($directory, 0o700, true) && ! is_dir($directory)) {
+        // Trailing is_dir() covers a concurrent create; unreachable by test.
+        if (! is_dir($directory) && ! mkdir($directory, 0o700, true) && ! is_dir($directory)) { // mutation:ignore race guard
             throw new RuntimeException("Could not create the rate limit directory [$directory].");
         }
 

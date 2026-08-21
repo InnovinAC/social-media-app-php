@@ -81,8 +81,9 @@ class Container implements ContainerInterface
      */
     public function instance(string $id, mixed $instance): void
     {
+        // No `shared` flag needed: get() returns anything in $resolved before
+        // it ever consults the flag. Setting one here would be unreachable.
         $this->resolved[$id] = $instance;
-        $this->shared[$id] = true;
     }
 
     /**
@@ -110,7 +111,7 @@ class Container implements ContainerInterface
             return $this->resolved[$id];
         }
 
-        if (in_array($id, $this->building, true)) {
+        if (in_array($id, $this->building, true)) { // mutation:ignore strict flag is equivalent for the string ids used here
             throw ContainerException::circularDependency($id, $this->building);
         }
 
@@ -268,7 +269,10 @@ class Container implements ContainerInterface
      */
     private function coerce(mixed $value, ?ReflectionType $type): mixed
     {
-        if (! is_string($value) || ! $type instanceof ReflectionNamedType || ! $type->isBuiltin()) {
+        // No isBuiltin() check: the match below already falls through to the
+        // value untouched for anything that is not one of the three scalars,
+        // and a class cannot be named `int`.
+        if (! $type instanceof ReflectionNamedType || ! is_string($value)) {
             return $value;
         }
 

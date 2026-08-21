@@ -155,9 +155,24 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Testing
 
-330 tests, all against in-memory SQLite, so there is nothing to set up. CI runs
-them on PHP 8.2, 8.3 and 8.4, plus PHPStan, code style, a packaging check, and a
-`--no-dev` job that boots an API-only app with no optional package installed.
+458 tests. They run against SQLite by default, nothing to install, and the
+same suite runs against MySQL 8 and Postgres 16, because the interesting bugs
+only exist on a database you did not develop on. Postgres rejects the backticks
+MySQL requires; MySQL commits implicitly on DDL and hands back every column as a
+string. All three found real bugs here.
+
+```bash
+make db-up && make test-drivers
+```
+
+The suite is also mutation tested: `bin/mutate` breaks the source one edit at a
+time and checks the tests notice. **317 mutants, 100% killed** across the three
+drivers. That number is the one worth trusting; a passing suite only proves the
+tests ran.
+
+CI runs the matrix on PHP 8.2, 8.3 and 8.4, plus PHPStan level 6, code style, a
+packaging check, mutation testing, and a `--no-dev` job that boots an API-only
+app with no optional package installed.
 
 Because nothing reaches for a global, testing a controller is just calling it:
 

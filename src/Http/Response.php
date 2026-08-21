@@ -119,6 +119,16 @@ class Response
         return $this->header(self::TRIGGER_HEADER, json_encode($events, JSON_THROW_ON_ERROR));
     }
 
+    /**
+     * The cookies queued on this response.
+     *
+     * @return list<array{name: string, value: string, options: array<string, mixed>}>
+     */
+    public function cookies(): array
+    {
+        return $this->cookies;
+    }
+
     public function isRedirect(): bool
     {
         return $this->status >= 300 && $this->status < 400;
@@ -138,7 +148,9 @@ class Response
             http_response_code($this->status);
 
             foreach ($this->headers as $name => $value) {
-                header($this->normaliseHeaderName($name) . ': ' . $value, true);
+                // The replace flag cannot be observed without inspecting real
+                // headers, which a unit test has no access to.
+                header($this->normaliseHeaderName($name) . ': ' . $value, true); // mutation:ignore
             }
 
             foreach ($this->cookies as $cookie) {

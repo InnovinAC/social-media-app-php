@@ -97,7 +97,8 @@ final class Application
 
     public function usesSession(): bool
     {
-        return (bool) $this->config('session', true);
+        // No fallback needed: defaultConfig() always supplies this key.
+        return (bool) $this->config('session');
     }
 
     public function basePath(string $append = ''): string
@@ -309,7 +310,7 @@ final class Application
         $this->container->singleton(
             ExceptionHandler::class,
             fn (Container $c): ExceptionHandler => new ExceptionHandler(
-                (bool) $this->config('debug', false),
+                (bool) $this->config('debug'),
                 // An error handler must never fail while building itself, so a
                 // broken view setup degrades to the built-in error page.
                 $this->resolveViewsQuietly($c),
@@ -342,7 +343,7 @@ final class Application
     {
         $views = ViewFactory::fromConfig(
             (array) $this->config('views', []),
-            (bool) $this->config('debug', false),
+            (bool) $this->config('debug'),
         );
 
         if ($views === null) {

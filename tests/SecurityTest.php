@@ -10,9 +10,11 @@ use Phpvin\Application;
 use Phpvin\Container\Container;
 use Phpvin\Http\Request;
 use Phpvin\Http\Response;
+use Phpvin\Http\Session;
 use Phpvin\Middleware\Pipeline;
 use Phpvin\Middleware\SecurityHeaders;
 use Phpvin\Middleware\ThrottleRequests;
+use Phpvin\Middleware\VerifyCsrfToken;
 use Phpvin\RateLimit\RateLimiter;
 use RuntimeException;
 
@@ -268,6 +270,132 @@ final class SecurityTest extends TestCase
 
         $this->assertSame(429, $this->pipe([$throttle], $ada)->status());
         $this->assertSame(200, $this->pipe([$throttle], $grace)->status(), 'a different account is unaffected');
+    }
+
+    // --- CSRF exemptions --------------------------------------------------
+
+    #[Test]
+    public function an_exact_path_can_be_exempted(): void
+    {
+        $app = new Application(__DIR__ . '/fixtures', [
+            'views' => ['engine' => 'none'], 'session' => false, 'providers' => [],
+        ]);
+        $app->middleware([new VerifyCsrfToken(['/webhooks/stripe'])]);
+        $app->router()->post('/webhooks/stripe', fn (): string => 'received');
+        $app->router()->post('/webhooks/other', fn (): string => 'received');
+
+        $exempt = $app->handle(Request::create('POST', '/webhooks/stripe', session: new Session([])));
+        $guarded = $app->handle(Request::create('POST', '/webhooks/other', session: new Session([])));
+
+        $this->assertSame('received', $exempt->body(), 'the exact match is exempt');
+        $this->assertSame(419, $guarded->status(), 'nothing else is');
+    }
+
+    #[Test]
+    public function a_prefix_only_exempts_when_it_ends_in_a_star(): void
+    {
+        $app = new Application(__DIR__ . '/fixtures', [
+            'views' => ['engine' => 'none'], 'session' => false, 'providers' => [],
+        ]);
+
+        // No trailing star, so this must behave as an exact match and not
+        // quietly exempt everything underneath it.
+        $app->middleware([new VerifyCsrfToken(['/api'])]);
+        $app->router()->post('/api/orders', fn (): string => 'created');
+
+        $this->assertSame(
+            419,
+            $app->handle(Request::create('POST', '/api/orders', session: new Session([])))->status(),
+        );
+    }
+
+    #[Test]
+    public function a_wildcard_does_not_exempt_an_unrelated_path(): void
+    {
+        $app = new Application(__DIR__ . '/fixtures', [
+            'views' => ['engine' => 'none'], 'session' => false, 'providers' => [],
+        ]);
+        $app->middleware([new VerifyCsrfToken(['/webhooks/*'])]);
+        $app->router()->post('/admin/delete', fn (): string => 'deleted');
+
+        $this->assertSame(
+            419,
+            $app->handle(Request::create('POST', '/admin/delete', session: new Session([])))->status(),
+        );
+    }
+
+    // --- rate limiter edges -----------------------------------------------
+
+    #[Test]
+    public function a_window_that_expires_exactly_now_counts_as_elapsed(): void
+    {
+        $limiter = $this->limiter();
+        $limiter->hit('boundary', decaySeconds: 0);
+
+        // expires == now must read as elapsed, not as one second remaining.
+        $this->assertSame(0, $limiter->attempts('boundary'));
+        $this->assertFalse($limiter->tooManyAttempts('boundary', 1));
+    }
+
+    #[Test]
+    public function a_hit_on_an_exactly_expired_window_starts_a_new_one(): void
+    {
+        $limiter = $this->limiter();
+        $limiter->hit('edge', decaySeconds: 60);
+        $limiter->hit('edge', decaySeconds: 60);
+
+        // Rewritten by hand rather than by sleeping, so the boundary is exact:
+        // expires == now must count as elapsed, not as still open.
+        foreach (glob($this->storage . '/*') ?: [] as $file) {
+            file_put_contents($file, json_encode(['count' => 2, 'expires' => time()]));
+        }
+
+        $this->assertSame(1, $limiter->hit('edge', decaySeconds: 60), 'the counter restarted');
+    }
+
+    #[Test]
+    public function availability_is_zero_when_nothing_is_recorded(): void
+    {
+        $this->assertSame(0, $this->limiter()->availableIn('never-hit'));
+    }
+
+    #[Test]
+    public function availability_counts_down_while_a_window_is_open(): void
+    {
+        $limiter = $this->limiter();
+        $limiter->hit('open', decaySeconds: 60);
+
+        $this->assertGreaterThan(0, $limiter->availableIn('open'));
+        $this->assertLessThanOrEqual(60, $limiter->availableIn('open'));
+    }
+
+    #[Test]
+    public function a_corrupt_record_is_treated_as_no_record(): void
+    {
+        $limiter = $this->limiter();
+        $limiter->hit('victim');
+
+        // A half-written file after a crash must not throw, and must not be
+        // read as an enormous attempt count that locks somebody out forever.
+        foreach (glob($this->storage . '/*') ?: [] as $file) {
+            file_put_contents($file, '{"count": ');
+        }
+
+        $this->assertSame(0, $limiter->attempts('victim'));
+        $this->assertSame(1, $limiter->hit('victim'), 'it starts a fresh window');
+    }
+
+    #[Test]
+    public function a_record_missing_its_fields_is_treated_as_no_record(): void
+    {
+        $limiter = $this->limiter();
+        $limiter->hit('partial');
+
+        foreach (glob($this->storage . '/*') ?: [] as $file) {
+            file_put_contents($file, '{"count": 9999}');
+        }
+
+        $this->assertSame(0, $limiter->attempts('partial'));
     }
 
     #[Test]
