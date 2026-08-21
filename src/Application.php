@@ -5,8 +5,11 @@ declare(strict_types=1);
 namespace Phpvin;
 
 use Closure;
+use Phpvin\Cache\ArrayStore;
+use Phpvin\Cache\FileStore;
 use Phpvin\Container\Container;
 use Phpvin\Crypto\Encrypter;
+use Phpvin\Events\Dispatcher;
 use Phpvin\Http\Commands;
 use Phpvin\Http\ExceptionHandler;
 use Phpvin\Http\JsonResponse;
@@ -20,9 +23,11 @@ use Phpvin\Routing\Router;
 use Phpvin\Routing\UrlGenerator;
 use Phpvin\Validation\Validator;
 use Phpvin\View\ViewFactory;
+use Psr\EventDispatcher\EventDispatcherInterface;
 use Psr\Log\LoggerInterface;
 use Psr\Log\LogLevel;
 use Psr\Log\NullLogger;
+use Psr\SimpleCache\CacheInterface;
 use RuntimeException;
 use Throwable;
 
@@ -296,6 +301,25 @@ final class Application
         );
 
         $this->container->singleton(
+            EventDispatcherInterface::class,
+            fn (Container $c): Dispatcher => new Dispatcher($c),
+        );
+
+        // Same instance under both names, so `listen()` and `dispatch()` reach
+        // the same dispatcher whichever type a class asks for.
+        $this->container->singleton(
+            Dispatcher::class,
+            fn (Container $c): Dispatcher => $c->get(EventDispatcherInterface::class),
+        );
+
+        $this->container->singleton(
+            CacheInterface::class,
+            fn (): CacheInterface => ($path = $this->config('cache.path')) === null
+                ? new ArrayStore()
+                : new FileStore((string) $path),
+        );
+
+        $this->container->singleton(
             Encrypter::class,
             fn (): Encrypter => Encrypter::fromKey(
                 (string) ($this->config('key') ?? throw new RuntimeException(
@@ -407,6 +431,11 @@ final class Application
             // No default: an encryption key that ships with the framework is
             // not a key. Encrypter is only built if something asks for it.
             'key' => null,
+
+            // No path means an in-memory cache that lasts one request, which
+            // is the right default: a file cache nobody configured is a
+            // directory nobody knew was filling up.
+            'cache' => ['path' => null],
 
             'database' => null,
 

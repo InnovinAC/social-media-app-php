@@ -49,8 +49,11 @@ frameworks hard to reason about were not.
 composer require innovin/phpvin
 ```
 
-Required dependencies: `psr/container` and `psr/log`. Add `twig/twig` for the
-Twig engine and `vlucas/phpdotenv` for `.env` files if you want them.
+Required dependencies are four PSR interface packages and nothing else:
+`psr/container`, `psr/log`, `psr/simple-cache` and `psr/event-dispatcher`.
+Together they are a few kilobytes of interfaces, and they mean anything in the
+ecosystem drops in. Add `twig/twig` for the Twig engine and `vlucas/phpdotenv`
+for `.env` files if you want them.
 
 The smallest thing that works:
 
@@ -100,6 +103,7 @@ $app->run();
 | [Configuration](docs/configuration.md) | every option, and the container |
 | [Testing](docs/testing.md) | the toolkit for testing applications built on phpvin |
 | [Console](docs/console.md) | migrate, route:list, make, and writing your own |
+| [Cache, events, files](docs/cache-events-files.md) | PSR-16 cache, PSR-14 events, downloads and streaming |
 
 ## What's in the box
 
@@ -119,6 +123,10 @@ $app->run();
 | `FileLogger` | PSR-3, so failures are recorded out of the box |
 | `ApplicationTestCase` | test your app through the real stack, with CSRF and sessions handled |
 | `Console` | `migrate`, `route:list`, `make`, `about`, `serve`, plus your own |
+| `Encrypter` | authenticated encryption; `EncryptCookies` seals what the client can rewrite |
+| `CacheInterface` | PSR-16, file and array stores |
+| `Dispatcher` | PSR-14 events, listeners built lazily |
+| `FileResponse` / `StreamedResponse` | downloads and streams that never buffer |
 
 ## Working on the framework itself
 
