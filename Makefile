@@ -17,6 +17,7 @@ help:
 	@echo "test          Run the framework test suite"
 	@echo "lint          Syntax-check every PHP file"
 	@echo "package-check Verify the framework installs and boots as a real dependency"
+	@echo "fuzz          Throw hostile input at every parser"
 	@echo "vendor-js     Download jQuery into the skeleton"
 	@echo "serve         Run the skeleton at http://localhost:8000"
 	@echo "migrate       Apply pending migrations"
@@ -110,6 +111,14 @@ mutate:
 
 mutate-drivers:
 	@./bin/mutate --drivers=sqlite,mysql,pgsql
+
+.PHONY: fuzz
+
+# Hostile input at every parser. A documented exception is a pass; a TypeError
+# is a value reaching code that assumed it could not exist. The seed is printed
+# so any failure replays exactly.
+fuzz:
+	@./bin/fuzz --cases=50000
 
 .PHONY: bench
 

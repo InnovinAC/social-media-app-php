@@ -6,6 +6,7 @@ namespace Phpvin\Tests;
 
 use Closure;
 use InvalidArgumentException;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 use Phpvin\Container\Container;
@@ -423,5 +424,110 @@ final class CryptoTest extends TestCase
         });
 
         $this->assertSame('acme', $seen);
+    }
+
+    // --- exhaustive tamper detection --------------------------------------
+
+    /**
+     * @return list<array{0: string}>
+     */
+    public static function ciphers(): array
+    {
+        $ciphers = [['x1']];
+
+        if (in_array('aes-256-gcm', openssl_get_cipher_methods(), true)) {
+            $ciphers[] = ['a1'];
+        }
+
+        return $ciphers;
+    }
+
+    #[Test]
+    #[DataProvider('ciphers')]
+    public function flipping_any_single_bit_makes_the_payload_refuse_to_open(string $cipher): void
+    {
+        // Round trips prove a payload survives being left alone, which is the
+        // easy half. Authentication is the claim that *nothing else* survives,
+        // and the only honest way to check that is exhaustively: walk every
+        // bit of the nonce, the tag and the ciphertext, flip it, and require
+        // every single one to fail. One position that still opens is a hole,
+        // and it is exactly the position an attacker would go looking for.
+        $encrypter = Encrypter::fromKey(Encrypter::generateKey(), $cipher);
+
+        [$prefix, $encoded] = explode('.', $encrypter->encrypt('the secret'), 2);
+        $raw = (string) base64_decode(strtr($encoded, '-_', '+/'), true);
+
+        $opened = [];
+
+        for ($byte = 0; $byte < strlen($raw); $byte++) {
+            for ($bit = 0; $bit < 8; $bit++) {
+                $tampered = $raw;
+                $tampered[$byte] = chr(ord($raw[$byte]) ^ (1 << $bit));
+
+                $payload = $prefix . '.' . rtrim(strtr(base64_encode($tampered), '+/', '-_'), '=');
+
+                try {
+                    $encrypter->decrypt($payload);
+                    $opened[] = "byte $byte bit $bit";
+                } catch (DecryptionFailed) {
+                    // Correct: authentication caught it.
+                }
+            }
+        }
+
+        $this->assertSame([], $opened, 'A tampered payload opened anyway.');
+    }
+
+    #[Test]
+    #[DataProvider('ciphers')]
+    public function truncating_a_payload_anywhere_makes_it_refuse_to_open(string $cipher): void
+    {
+        $encrypter = Encrypter::fromKey(Encrypter::generateKey(), $cipher);
+
+        [$prefix, $encoded] = explode('.', $encrypter->encrypt('the secret'), 2);
+        $raw = (string) base64_decode(strtr($encoded, '-_', '+/'), true);
+
+        for ($length = 0; $length < strlen($raw); $length++) {
+            $payload = $prefix . '.' . rtrim(strtr(base64_encode(substr($raw, 0, $length)), '+/', '-_'), '=');
+
+            try {
+                $encrypter->decrypt($payload);
+                $this->fail("A payload truncated to $length bytes opened anyway.");
+            } catch (DecryptionFailed) {
+                // Correct.
+            }
+        }
+
+        $this->assertTrue(true);
+    }
+
+    #[Test]
+    public function a_payload_cannot_be_downgraded_to_the_weaker_cipher(): void
+    {
+        // The cipher label is authenticated as associated data. Without that,
+        // rewriting the prefix would be a free way to pick which primitive
+        // verifies the payload -- the classic algorithm-confusion move.
+        if (! in_array('aes-256-gcm', openssl_get_cipher_methods(), true)) {
+            $this->markTestSkipped('Needs both backends to compare them.');
+        }
+
+        $key = Encrypter::generateKey();
+        $sealed = Encrypter::fromKey($key, 'x1')->encrypt('the secret');
+
+        [, $encoded] = explode('.', $sealed, 2);
+
+        $this->expectException(DecryptionFailed::class);
+
+        Encrypter::fromKey($key, 'a1')->decrypt('a1.' . $encoded);
+    }
+
+    #[Test]
+    public function a_payload_sealed_under_one_key_never_opens_under_another(): void
+    {
+        $sealed = Encrypter::fromKey(Encrypter::generateKey())->encrypt('the secret');
+
+        $this->expectException(DecryptionFailed::class);
+
+        Encrypter::fromKey(Encrypter::generateKey())->decrypt($sealed);
     }
 }

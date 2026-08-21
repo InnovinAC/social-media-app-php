@@ -53,6 +53,40 @@ is true, in rough order of likelihood:
 3. **The code is dead.** Delete it. Several survivors turned out to be
    redundant guards and unreachable fallbacks.
 
+`bin/mutate` edits real files, so do not run anything else against the working
+tree while it is going, a concurrent test run or `bin/fuzz` will read whichever
+mutant happens to be applied and report a bug that does not exist. It puts every
+file back on the way out, including on Ctrl-C, a CI timeout or a fatal error,
+and verifies before printing a score that it actually did. If it ever reports
+that it left the tree modified, `git checkout` before trusting anything you ran
+after it.
+
+### Fuzzing
+
+Mutation testing asks whether the tests would notice the code changing. Fuzzing
+asks the other question: whether the code notices *input* changing. `bin/fuzz`
+throws things no reasonable caller would send (control bytes, overlong UTF-8,
+traversal sequences, integer boundaries, serialised objects) at every parser.
+
+```bash
+make fuzz                    # 50,000 cases from a random seed
+./bin/fuzz --seed=12345      # replay a reported failure exactly
+```
+
+The rule each entry point is held to is **reject whatever you like, but reject
+it deliberately**. An exception the method documents is a pass: the input was
+understood and refused. A `TypeError`, `ValueError` or `Error` is a failure,
+because it means the value reached code that had assumed it could not exist.
+That is the line between handling something and happening to survive it.
+
+If you add a parser, add it to the target list in `bin/fuzz` and say which
+exceptions it is allowed to throw. And when you add a target, check that it can
+actually fail: break the guard on purpose, confirm the fuzzer catches it, then
+put it back. A target whose assertion is too weak to fail is worse than no
+target, because it reads as coverage. One here compared an unresolved path
+against its own root prefix, which passes for `/root/../etc/passwd`; it was
+found exactly this way.
+
 ### Packaging
 
 There is a fourth check worth running when you touch anything outside `src/`:

@@ -193,6 +193,26 @@ jobs:
 
   # Slow (a few minutes) and only meaningful once the suite is green, so it
   # runs on its own rather than blocking every other job.
+  fuzz:
+    runs-on: ubuntu-latest
+    name: Framework / fuzzing
+    needs: [test]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: pdo, pdo_sqlite
+          coverage: none
+
+      - run: composer install --prefer-dist --no-interaction --no-progress
+
+      # A fresh seed every run, so CI keeps exploring inputs rather than
+      # re-testing the same ones. A failure prints the seed that produced it.
+      - run: ./bin/fuzz --cases=100000
+
   mutation:
     runs-on: ubuntu-latest
     name: Framework / mutation testing

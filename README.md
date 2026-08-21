@@ -167,7 +167,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Testing
 
-737 tests. They run against SQLite by default, nothing to install, and the
+743 tests. They run against SQLite by default, nothing to install, and the
 same suite runs against MySQL 8 and Postgres 16, because the interesting bugs
 only exist on a database you did not develop on. Postgres rejects the backticks
 MySQL requires; MySQL commits implicitly on DDL and hands back every column as a
@@ -186,9 +186,20 @@ The skeleton has 26 tests of its own, written on the framework's testing
 toolkit, so "an application built on this is testable" is demonstrated rather
 than asserted.
 
+`bin/fuzz` throws input no reasonable caller would send (control bytes,
+overlong UTF-8, traversal sequences, integer boundaries, serialised objects)
+at fourteen entry points, and holds each to one rule: reject whatever you like,
+but reject it *deliberately*. A documented exception passes. A `TypeError` is a
+value that reached code which assumed it could not exist. Every run prints its
+seed, so a CI failure replays exactly:
+
+```bash
+make fuzz
+```
+
 CI runs the matrix on PHP 8.2, 8.3 and 8.4, plus PHPStan level 6, code style, a
-packaging check, mutation testing, and a `--no-dev` job that boots an API-only
-app with no optional package installed.
+packaging check, mutation testing, a fresh-seed fuzz run, and a `--no-dev` job
+that boots an API-only app with no optional package installed.
 
 ### Testing your own application
 
@@ -266,7 +277,7 @@ what has moved.
 "Battle-tested" gets used for two different things, and it is worth being
 precise about which one this has.
 
-The first is engineering rigour, and that is measurable. Every merge runs 737
+The first is engineering rigour, and that is measurable. Every merge runs 743
 tests against SQLite, MySQL 8 and Postgres 16, on PHP 8.2, 8.3 and 8.4. Every
 mutant of the source, 497 of them, is killed by the suite on all three
 drivers, which means there is no line you can silently change and still go
@@ -275,6 +286,12 @@ way `.gitattributes` says it ships, installs it as a real copy rather than a
 symlink, and boots it, because a path repository hides a whole class of
 packaging mistake. [SECURITY.md](SECURITY.md) states the threat model as a
 table you can check against the code.
+
+The suite also asserts a few things exhaustively rather than by example.
+Authentication is the claim that *nothing* but the genuine payload survives, so
+the encryption tests walk every bit of every sealed payload (nonce, tag and
+ciphertext), flip it, and require all of them to fail to open. One position
+that still opened would be precisely the one worth attacking.
 
 That regime finds real defects rather than decorating passing tests. The query
 builder was wholly broken on Postgres. Transaction depth desynced on MySQL.

@@ -31,6 +31,42 @@ declare(strict_types=1);
 $root = dirname(__DIR__);
 require $root . '/vendor/autoload.php';
 
+/**
+ * Put the source back if this process is stopped part way through.
+ *
+ * A mutant is a deliberate edit to a real file, so a run that dies between the
+ * write and the restore leaves the working tree quietly wrong. The next test
+ * run then fails for a reason that is not in git, and the next `bin/fuzz`
+ * reports a bug nobody introduced. Ctrl-C, a CI timeout and a fatal error all
+ * have to unwind this.
+ */
+$GLOBALS['mutating'] = null;
+
+$restore = static function (): void {
+    $state = $GLOBALS['mutating'] ?? null;
+
+    if (is_array($state)) {
+        file_put_contents($state['file'], $state['original']);
+        $GLOBALS['mutating'] = null;
+    }
+};
+
+register_shutdown_function($restore);
+
+if (function_exists('pcntl_async_signals')) {
+    pcntl_async_signals(true);
+
+    foreach ([SIGINT, SIGTERM, SIGHUP] as $signal) {
+        pcntl_signal($signal, static function () use ($restore): void {
+            $restore();
+
+            fwrite(STDERR, "\ninterrupted: the source has been put back\n");
+
+            exit(130);
+        });
+    }
+}
+
 $options = getopt('', ['path::', 'limit::', 'min::', 'drivers::', 'quiet', 'help']);
 
 if (isset($options['help'])) {
@@ -170,6 +206,14 @@ function render(array $tokens, int $mutateAt, string $replacement): string
 }
 
 $files = sourceFiles($path);
+
+// Every file as it was before anything was touched, so the end of the run can
+// prove it put them all back.
+$before = [];
+
+foreach ($files as $sourceFile) {
+    $before[$sourceFile] = hash('xxh128', (string) file_get_contents($sourceFile));
+}
 $total = 0;
 $killed = 0;
 $survivors = [];
@@ -218,12 +262,22 @@ foreach ($files as $file) {
         }
 
         $total++;
-        file_put_contents($file, render($tokens, $mutation['index'], $mutation['to']));
 
-        $caught = $killsIt();
+        // Registered before the file is touched, so an interrupt between the
+        // write and the restore still puts the source back.
+        $GLOBALS['mutating'] = ['file' => $file, 'original' => $original];
 
-        // Always restore, whatever happened.
-        file_put_contents($file, $original);
+        try {
+            file_put_contents($file, render($tokens, $mutation['index'], $mutation['to']));
+
+            $caught = $killsIt();
+        } finally {
+            // Always restore, whatever happened -- including a throw from the
+            // runner, which would otherwise leave a mutant on disk and make
+            // every later run report failures that are not in the source.
+            file_put_contents($file, $original);
+            $GLOBALS['mutating'] = null;
+        }
 
         if ($caught) {
             $killed++;
@@ -245,6 +299,28 @@ foreach ($files as $file) {
         $escaped = count($mutations) - $fileKilled;
         printf("%s\n", $escaped === 0 ? 'all killed' : "$escaped survived");
     }
+}
+
+// Before any score is printed: a restore that silently did not happen leaves
+// the working tree wrong in a way that looks like a bug in the source. Later
+// runs then fail for a reason that is not in git, and the failure gets
+// attributed to whatever was edited next. Catching it here makes it loud.
+$corrupted = [];
+
+foreach ($before as $file => $hash) {
+    if (hash('xxh128', (string) file_get_contents($file)) !== $hash) {
+        $corrupted[] = $file;
+    }
+}
+
+if ($corrupted !== []) {
+    fwrite(STDERR, sprintf(
+        "\n\033[31mThis run left the working tree modified:\033[0m\n  %s\n"
+        . "Restore it with `git checkout` before trusting any result.\n",
+        implode("\n  ", $corrupted),
+    ));
+
+    exit(2);
 }
 
 $score = $total === 0 ? 100.0 : round($killed / $total * 100, 1);
