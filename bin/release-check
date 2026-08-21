@@ -1,0 +1,142 @@
+#!/usr/bin/env bash
+#
+# Verify everything a tag will make permanent.
+#
+# A tag is the one action in this repository that cannot be taken back: once
+# Packagist has seen v0.1.0, that version is that content forever, and a
+# mistake is fixed by burning a version number rather than by amending. So the
+# things a release asserts -- that the version in the code matches the tag,
+# that the changelog describes what is being shipped, that the manifest is
+# valid, that the tree is what CI actually tested -- are checked here rather
+# than remembered.
+#
+# This does not tag and does not push. It tells you whether you should.
+#
+#   bin/release-check v0.1.0
+
+set -uo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$ROOT"
+
+TAG="${1:-}"
+
+if [ -z "$TAG" ]; then
+    echo "Usage: bin/release-check v0.1.0" >&2
+    exit 64
+fi
+
+VERSION="${TAG#v}"
+
+ok()   { printf '  \033[32mok\033[0m    %s\n' "$*"; }
+bad()  { printf '  \033[31mFAIL\033[0m  %s\n' "$*"; FAILURES=$((FAILURES + 1)); }
+note() { printf '  \033[33mnote\033[0m  %s\n' "$*"; }
+
+FAILURES=0
+
+printf '\033[1mReleasing %s\033[0m\n' "$TAG"
+
+# --- the tag itself --------------------------------------------------------
+
+if git rev-parse "$TAG" >/dev/null 2>&1; then
+    bad "$TAG already exists; a published version is never re-cut"
+else
+    ok "$TAG is not taken"
+fi
+
+case "$TAG" in
+    v[0-9]*.[0-9]*.[0-9]*) ok "tag looks like a version" ;;
+    *) bad "tag should look like v1.2.3" ;;
+esac
+
+# --- the tree ---------------------------------------------------------------
+
+if [ -z "$(git status --porcelain)" ]; then
+    ok "working tree is clean"
+else
+    bad "working tree has uncommitted changes, so the tag would not match what you tested"
+fi
+
+# --- what the code claims ---------------------------------------------------
+
+DECLARED="$(grep -oE "VERSION = '[^']+'" src/Application.php | head -1 | sed "s/.*'\(.*\)'/\1/")"
+
+if [ "$DECLARED" = "$VERSION" ]; then
+    ok "Application::VERSION is $VERSION"
+else
+    bad "Application::VERSION is '$DECLARED', tag says '$VERSION'"
+fi
+
+# --- the manifest -----------------------------------------------------------
+
+if composer validate --strict --no-interaction >/dev/null 2>&1; then
+    ok "composer.json validates strictly"
+else
+    bad "composer.json does not validate (run: composer validate --strict)"
+fi
+
+if grep -qE '^\s*"version"\s*:' composer.json; then
+    bad "composer.json pins a version; the tag is the version"
+else
+    ok "composer.json leaves the version to the tag"
+fi
+
+for required in LICENSE README.md CHANGELOG.md SECURITY.md; do
+    [ -f "$required" ] && ok "ships $required" || bad "missing $required"
+done
+
+# --- the changelog ----------------------------------------------------------
+
+if grep -qE "^## \[$VERSION\]" CHANGELOG.md; then
+    ok "CHANGELOG has a $VERSION section"
+else
+    bad "CHANGELOG has no '## [$VERSION]' section"
+fi
+
+if grep -qE '^## \[Unreleased\]' CHANGELOG.md; then
+    if [ -n "$(awk '/^## \[Unreleased\]/{f=1;next} /^## \[/{f=0} f && NF && !/^$/' CHANGELOG.md)" ]; then
+        bad "CHANGELOG still has content under [Unreleased]: fold it into $VERSION or move it out"
+    else
+        ok "[Unreleased] is empty"
+    fi
+else
+    ok "no dangling [Unreleased] section"
+fi
+
+# --- what actually ships ----------------------------------------------------
+
+STAGED="$(git archive --format=tar "HEAD" 2>/dev/null | tar -t 2>/dev/null)"
+
+if [ -z "$STAGED" ]; then
+    bad "could not read the archive git would publish"
+else
+    for shipped in src/Application.php resources/js/phpvin.js composer.json LICENSE; do
+        echo "$STAGED" | grep -qx "$shipped" && ok "archive ships $shipped" || bad "archive is missing $shipped"
+    done
+
+    for excluded in skeleton/ tests/ phpunit.xml Makefile; do
+        if echo "$STAGED" | grep -q "^$excluded"; then
+            bad "archive would ship $excluded"
+        else
+            ok "archive excludes $excluded"
+        fi
+    done
+fi
+
+# --- the gates --------------------------------------------------------------
+
+note "this does not re-run the suite; run 'make test lint package-check' and the"
+note "driver matrix first if you have not already"
+
+echo
+
+if [ "$FAILURES" -eq 0 ]; then
+    printf '\033[32mReady. To publish:\033[0m\n'
+    printf '    git tag -a %s -m "%s"\n' "$TAG" "$TAG"
+    printf '    git push origin %s\n' "$TAG"
+    printf 'Then submit the repository once at https://packagist.org and enable the GitHub hook.\n'
+    exit 0
+fi
+
+printf '\033[31m%d check(s) failed. Do not tag yet.\033[0m\n' "$FAILURES"
+exit 1
