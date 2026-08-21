@@ -36,6 +36,29 @@ pre-1.0 caveat that the API may still move.
 - **Query counting.** `Connection::queryCount()` and an optional query log, so
   "is this N+1?" is something a test can assert.
 
+### Security
+
+- **Template path traversal (pre-release).** Template names reach an engine
+  from application code, and application code builds them out of URL segments;
+  rendering `"pages/$slug"` for a `/page/{slug}` route is the obvious way to
+  write a CMS. `PhpEngine` resolved names by concatenation, so `../secret/evil`
+  left the view directory and was *executed*: a slug became remote code
+  execution. `HtmlEngine` had the same flaw for file disclosure. `TemplatePath`
+  now contains every bundled engine to its root, rejecting `..` lexically and
+  comparing realpaths so a symlink inside the root cannot point out of it.
+  Containment is stated on the `Engine` contract, so writing your own engine
+  tells you the guarantee it has to keep.
+- **Response header injection (pre-release).** `Response::header()` accepted CR
+  and LF in values, so `redirect($request->input('next'))` could end the header
+  and append another, classically a `Set-Cookie`. Values now reject CR, LF and
+  NUL, and names are checked against the RFC 7230 token grammar. PHP's own
+  `header()` drops such a call with a warning, which is a silently missing
+  header rather than an error and covers only one SAPI path.
+- **A threat model.** [SECURITY.md](SECURITY.md) now states, as a table,
+  which attack classes the framework closes, which it hands you a tool for,
+  and which are yours, including the ones it deliberately does not take on.
+
+
 ### Fixed
 
 - **`orWhere` could escape an ownership filter.** `where(a)->where(b)->orWhere(c)`

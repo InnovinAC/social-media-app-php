@@ -21,6 +21,34 @@ Pre-1.0, only the latest tagged release gets fixes.
 | ------- | --------- |
 | 0.1.x   | yes       |
 
+## Threat model
+
+What the framework holds the line on, and where the line stops being ours. A
+guarantee nobody wrote down is a guarantee nobody can hold you to, so this
+table is meant to be checked against the code rather than believed.
+
+| Attack | Status | How |
+| --- | --- | --- |
+| SQL injection through values | closed | Always bound, never interpolated. |
+| SQL injection through identifiers | closed | `Grammar::quote()` rejects anything but `name` or `table.name` before quoting, so an identifier cannot be built from request data at all. |
+| Mass assignment | closed | Opt-in. A model with no `$fillable` accepts nothing. |
+| CSRF | closed | `VerifyCsrfToken`, compared with `hash_equals`. |
+| Session fixation | closed | The id is regenerated on login. |
+| Session/cookie tampering | closed | `EncryptCookies` seals with AEAD; a modified value fails to open rather than decrypting to something chosen. |
+| Padding-oracle probing | closed | Every decryption failure returns the same message. |
+| Template path traversal | closed | `TemplatePath` contains every bundled engine to its root, lexically *and* by realpath. A `/page/{slug}` route cannot be walked out of the view directory. |
+| Response header injection | closed | `Response::header()` rejects CR, LF and NUL in values and non-token names, so a redirect built from input cannot append a second header. |
+| Upload path traversal | closed | `store()` passes any caller-supplied name through `basename()` and defaults to a generated one. |
+| Upload type confusion | closed | Type comes from sniffing the bytes, never the client's filename or `Content-Type`. |
+| Host header poisoning | closed by design | Absolute URLs come from a configured `baseUrl`. The framework never reads `Host` to build a link, so a poisoned one has nothing to poison. |
+| Timing attacks on tokens | closed | `hash_equals` for CSRF and any sealed value. |
+| Brute force | tool provided | `ThrottleRequests` plus the rate limiter. Yours to apply to the endpoints that need it. |
+| XSS | tool provided | Twig escapes by default; the `php` engine gives you `$e()`. Escaping is the template's job and always will be. |
+| Clickjacking, MIME sniffing | tool provided | `SecurityHeaders`. CSP is yours, because only you know what your pages load. |
+| Open redirect | yours | `redirect()` sends where you tell it. Validate a destination that came from a request before handing it over: use an allowlist, or refuse anything not starting with `/`. |
+| Authorisation | yours | The framework authenticates a session; who may touch what is application logic. |
+| Denial of service | yours | Body size, execution time and connection limits belong to the web server and PHP-FPM. |
+
 ## What the framework does for you
 
 Worth knowing what you are and are not getting.
@@ -37,6 +65,10 @@ Worth knowing what you are and are not getting.
   issued rather than left to whatever php.ini happens to say.
 - Uploads are typed by sniffing their contents, never by the client's filename
   or `Content-Type`, and are stored under a generated name.
+- Template names cannot escape the template root, on every bundled engine, so
+  rendering `"pages/$slug"` from a route parameter is safe to write.
+- Header values cannot carry a line break, so a `Location` built from user
+  input cannot smuggle a second header.
 - 5xx messages and stack traces are withheld from the response unless `debug`
   is on.
 
@@ -82,3 +114,15 @@ the command refuses unless you pass `--force`.
 
 Run `debug` on in production. It puts exception messages and stack traces in the
 browser.
+
+## Past advisories
+
+None yet. Two issues were found and closed during pre-release hardening, before
+any tagged version existed, and are listed here because a security page with
+nothing on it tells you less than one that shows its work:
+
+- **Template path traversal.** `PhpEngine` resolved names by concatenation, so
+  a template name taken from a URL could leave the view directory and be
+  executed. Closed in `e91f952`, along with the same flaw in `HtmlEngine`.
+- **Response header injection.** `Response::header()` accepted CRLF in values.
+  Closed in `e91f952`.
