@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Phpvin\Http;
 
+use InvalidArgumentException;
+
 /**
  * Controllers return one of these. Nothing in the framework echoes directly,
  * which is what makes a controller assertable in a unit test.
@@ -66,8 +68,34 @@ class Response
         return $this;
     }
 
+    /**
+     * Set a response header.
+     *
+     * A carriage return or newline in the value ends the header and starts
+     * another one, so a single unvalidated value (a `Location` built from a
+     * query parameter, a filename echoed into Content-Disposition) can append
+     * a `Set-Cookie` of the attacker's choosing. PHP's own header() drops such
+     * a call with a warning; that is a silently missing header rather than an
+     * error, and it only protects the one SAPI path. Refusing here means the
+     * response object never holds a value it cannot safely emit, whatever
+     * eventually writes it out.
+     *
+     * @throws InvalidArgumentException on a malformed name or a value
+     *                                   containing a control character
+     */
     public function header(string $name, string $value): static
     {
+        // RFC 7230 token. Anything outside it cannot appear before the colon.
+        if (preg_match('/^[!#$%&\'*+.^_`|~0-9A-Za-z-]+$/', $name) !== 1) {
+            throw new InvalidArgumentException("[$name] is not a valid header name.");
+        }
+
+        if (preg_match('/[\r\n\0]/', $value) === 1) {
+            throw new InvalidArgumentException(
+                "The value for the [$name] header contains a line break or null byte.",
+            );
+        }
+
         $this->headers[strtolower($name)] = $value;
 
         return $this;

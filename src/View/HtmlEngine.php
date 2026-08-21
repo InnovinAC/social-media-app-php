@@ -27,7 +27,7 @@ final class HtmlEngine implements Engine
     {
         $file = $this->resolve($template);
 
-        if (! is_file($file)) {
+        if ($file === null || ! is_file($file)) {
             throw new ViewNotFound("Template [$template] was not found in {$this->path}.");
         }
 
@@ -36,7 +36,9 @@ final class HtmlEngine implements Engine
 
     public function exists(string $template): bool
     {
-        return is_file($this->resolve($template));
+        $file = $this->resolve($template);
+
+        return $file !== null && is_file($file);
     }
 
     public function share(string $key, mixed $value): void
@@ -67,10 +69,8 @@ final class HtmlEngine implements Engine
         );
     }
 
-    private function resolve(string $template): string
+    private function resolve(string $template): ?string
     {
-        $template = str_ends_with($template, '.html') ? $template : "$template.html";
-
-        return rtrim($this->path, '/') . '/' . ltrim($template, '/');
+        return TemplatePath::resolve($this->path, $template, '.html');
     }
 }
