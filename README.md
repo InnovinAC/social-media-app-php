@@ -208,6 +208,30 @@ No HTTP server, no superglobals, no browser driver. The CSRF token is attached
 for you, the session persists between requests, and a failing assertion prints
 the body it actually got. See [docs/testing.md](docs/testing.md).
 
+## Performance
+
+`make bench` measures the hot paths. Routing is the one that matters, because
+it is the part that grows with your application:
+
+| Routes | Worst-case match |
+| --- | --- |
+| 50 | 1.4 µs |
+| 500 | 1.4 µs |
+| 3,000 | 1.4 µs |
+
+Flat, because routes are indexed rather than scanned: static paths go in a hash
+map, and routes with placeholders are bucketed by how many segments they can
+match and by their leading literal segment. A request for `/users/7` never tries
+`/posts/{id}`, and never runs a regex for a route of the wrong shape.
+
+The indexing cannot change which route wins: first registered still beats
+everything later, including the case where a dynamic route registered first
+shadows a literal one registered after it. There are fifteen tests pinning that,
+because it is exactly the kind of thing an optimisation breaks quietly.
+
+A whole request through `handle()` (routing, middleware, container resolution,
+response) costs around 4 µs with no I/O.
+
 ## Requirements
 
 PHP 8.2+ and `ext-pdo`.

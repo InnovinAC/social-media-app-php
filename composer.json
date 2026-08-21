@@ -67,7 +67,8 @@
             "@test:pgsql"
         ],
         "mutate": "bin/mutate",
-        "mutate:drivers": "bin/mutate --drivers=sqlite,mysql,pgsql"
+        "mutate:drivers": "bin/mutate --drivers=sqlite,mysql,pgsql",
+        "bench": "bin/bench"
     },
     "extra": {
         "branch-alias": {
@@ -83,6 +84,7 @@
     "scripts-descriptions": {
         "test:drivers": "Run the suite against SQLite, MySQL and Postgres (needs `make db-up`).",
         "check": "Everything CI runs on a single driver.",
-        "mutate": "Break the source one edit at a time and check the suite notices."
+        "mutate": "Break the source one edit at a time and check the suite notices.",
+        "bench": "Measure routing, container and request throughput."
     }
 }

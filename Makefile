@@ -110,3 +110,10 @@ mutate:
 
 mutate-drivers:
 	@./bin/mutate --drivers=sqlite,mysql,pgsql
+
+.PHONY: bench
+
+# Routing is measured against a realistic table, and the worst case is
+# reported next to the best -- an average hides a linear scan.
+bench:
+	@./bin/bench
