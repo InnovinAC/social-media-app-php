@@ -475,6 +475,162 @@ final class CacheTest extends TestCase
 
         $this->assertDirectoryExists($this->directory);
     }
+    // --- payload authentication -------------------------------------------
+
+    private function authenticated(): FileStore
+    {
+        return new FileStore($this->directory, secret: 'an-application-key');
+    }
+
+    /** The file backing the only entry in the cache directory. */
+    private function onlyEntry(): string
+    {
+        $files = glob($this->directory . '/*.cache') ?: [];
+
+        $this->assertCount(1, $files);
+
+        return $files[0];
+    }
+
+    #[Test]
+    public function an_authenticated_entry_round_trips(): void
+    {
+        $cache = $this->authenticated();
+        $cache->set('prefs', new CacheablePreferences('dark', 14));
+
+        $this->assertEquals(new CacheablePreferences('dark', 14), $cache->get('prefs'));
+    }
+
+    #[Test]
+    public function a_forged_payload_is_refused(): void
+    {
+        // Reading a cache entry means unserialising it. An attacker who can
+        // write a file anywhere on the box -- an upload bug, a zip extraction,
+        // a log written somewhere unfortunate -- would otherwise get to choose
+        // the bytes handed to unserialize(), which is code execution wherever
+        // the installed classes contain a usable gadget.
+        $cache = $this->authenticated();
+        $cache->set('prefs', 'genuine');
+
+        file_put_contents(
+            $this->onlyEntry(),
+            '0000000000' . str_repeat('a', 64) . serialize(new CacheablePreferences('pwned', 0)),
+        );
+
+        $this->assertSame('MISS', $cache->get('prefs', 'MISS'));
+    }
+
+    #[Test]
+    public function a_payload_too_short_to_hold_a_mac_is_refused(): void
+    {
+        $cache = $this->authenticated();
+        $cache->set('prefs', 'genuine');
+
+        file_put_contents($this->onlyEntry(), '0000000000' . serialize('unauthenticated'));
+
+        $this->assertSame('MISS', $cache->get('prefs', 'MISS'));
+    }
+
+    #[Test]
+    public function the_expiry_cannot_be_extended_without_the_secret(): void
+    {
+        // The MAC covers the expiry as well as the value, so a stolen entry
+        // cannot be given a longer life than it was written with.
+        $cache = $this->authenticated();
+        $cache->set('prefs', 'genuine', 60);
+
+        $entry = $this->onlyEntry();
+        file_put_contents($entry, '9999999999' . substr((string) file_get_contents($entry), 10));
+
+        $this->assertSame('MISS', $cache->get('prefs', 'MISS'));
+    }
+
+    #[Test]
+    public function an_entry_written_under_a_different_secret_is_refused(): void
+    {
+        // Rotating the application key invalidates the cache rather than
+        // trusting entries nobody can vouch for any more.
+        (new FileStore($this->directory, secret: 'old-key'))->set('prefs', 'genuine');
+
+        $this->assertSame(
+            'MISS',
+            (new FileStore($this->directory, secret: 'new-key'))->get('prefs', 'MISS'),
+        );
+    }
+
+    #[Test]
+    public function a_false_value_survives_authentication(): void
+    {
+        // unserialize() returns false on failure *and* for a stored false, so
+        // the two have to stay distinguishable once a MAC is in front of them.
+        $cache = $this->authenticated();
+        $cache->set('flag', false);
+
+        $this->assertFalse($cache->get('flag', 'MISS'));
+    }
+
+    #[Test]
+    public function an_empty_secret_means_no_secret(): void
+    {
+        // A blank APP_KEY is a key nobody set. It must not become a MAC key
+        // that every installation shipping the same stock .env would share.
+        $cache = new FileStore($this->directory, secret: '');
+        $cache->set('prefs', 'genuine');
+
+        $this->assertSame('genuine', $cache->get('prefs'));
+        $this->assertStringNotContainsString(
+            'a',
+            substr((string) file_get_contents($this->onlyEntry()), 10, 1),
+        );
+    }
+
+    #[Test]
+    public function without_a_secret_entries_are_plain(): void
+    {
+        $cache = new FileStore($this->directory);
+        $cache->set('prefs', 'genuine');
+
+        $this->assertSame('genuine', $cache->get('prefs'));
+        $this->assertSame(
+            '0000000000' . serialize('genuine'),
+            file_get_contents($this->onlyEntry()),
+        );
+    }
+
+    #[Test]
+    public function the_authenticated_format_is_fixed(): void
+    {
+        // A known answer, not a round trip. Round trips pass however the key
+        // is derived, so they would not notice a change to the derivation --
+        // and any such change silently invalidates every cache entry on every
+        // deployed installation, which looks like a mysterious cold cache
+        // rather than like a bug. Pinning the bytes makes the on-disk format
+        // something you have to break on purpose.
+        $cache = $this->authenticated();
+        $cache->set('prefs', 'genuine');
+
+        $this->assertSame(
+            '0000000000'
+            . 'c8143d1fbab831ddbf76cf7f5e3b32319956755cf1433ee87bf58c78aad9afa4'
+            . 's:7:"genuine";',
+            file_get_contents($this->onlyEntry()),
+        );
+    }
+
+    #[Test]
+    public function an_authenticated_entry_still_expires(): void
+    {
+        $now = 1_000;
+        $cache = new FileStore($this->directory, function () use (&$now): int {
+            return $now;
+        }, 'an-application-key');
+        $cache->set('prefs', 'genuine', 10);
+
+        $this->assertSame('genuine', $cache->get('prefs'));
+
+        $now = 1_011;
+        $this->assertSame('MISS', $cache->get('prefs', 'MISS'));
+    }
 }
 
 final class CacheablePreferences

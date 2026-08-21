@@ -167,7 +167,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Testing
 
-727 tests. They run against SQLite by default, nothing to install, and the
+737 tests. They run against SQLite by default, nothing to install, and the
 same suite runs against MySQL 8 and Postgres 16, because the interesting bugs
 only exist on a database you did not develop on. Postgres rejects the backticks
 MySQL requires; MySQL commits implicitly on DDL and hands back every column as a
@@ -178,7 +178,7 @@ make db-up && make test-drivers
 ```
 
 The suite is also mutation tested: `bin/mutate` breaks the source one edit at a
-time and checks the tests notice. **490 mutants, 100% killed** across the three
+time and checks the tests notice. **497 mutants, 100% killed** across the three
 drivers. That number is the one worth trusting; a passing suite only proves the
 tests ran.
 
@@ -266,9 +266,9 @@ what has moved.
 "Battle-tested" gets used for two different things, and it is worth being
 precise about which one this has.
 
-The first is engineering rigour, and that is measurable. Every merge runs 727
+The first is engineering rigour, and that is measurable. Every merge runs 737
 tests against SQLite, MySQL 8 and Postgres 16, on PHP 8.2, 8.3 and 8.4. Every
-mutant of the source, 475 of them, is killed by the suite on all three
+mutant of the source, 497 of them, is killed by the suite on all three
 drivers, which means there is no line you can silently change and still go
 green. PHPStan runs at level 6. `bin/package-check` builds the distribution the
 way `.gitattributes` says it ships, installs it as a real copy rather than a
