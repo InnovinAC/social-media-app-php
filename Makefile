@@ -20,6 +20,7 @@ help:
 	@echo "vendor-js     Download jQuery into the skeleton"
 	@echo "serve         Run the skeleton at http://localhost:8000"
 	@echo "migrate       Apply pending migrations"
+	@echo "routes        List every route"
 	@echo "clean         Remove installed dependencies and the dev database"
 	@echo "docker-up     Start the container stack"
 
@@ -55,7 +56,10 @@ serve: $(JQUERY_TARGET)
 	cd skeleton && php -S localhost:8000 -t public
 
 migrate:
-	cd skeleton && php database/migrate.php
+	cd skeleton && ./phpvin migrate
+
+routes:
+	cd skeleton && ./phpvin route:list
 
 clean:
 	rm -rf vendor skeleton/vendor skeleton/database/*.sqlite skeleton/storage/views/*.php
