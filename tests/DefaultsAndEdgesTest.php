@@ -117,6 +117,20 @@ final class DefaultsAndEdgesTest extends TestCase
     }
 
     #[Test]
+    public function a_blank_key_is_treated_as_no_key_at_all(): void
+    {
+        // A stock .env ships `APP_KEY=` with nothing after it. Reading that as
+        // a zero-length key turned every request into a 500 complaining about
+        // byte counts, which tells nobody what to do about it.
+        $app = $this->app(['views' => ['engine' => 'none'], 'providers' => [], 'key' => '']);
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('key:generate');
+
+        $app->container()->get(\Phpvin\Crypto\Encrypter::class);
+    }
+
+    #[Test]
     public function a_configured_key_produces_a_working_encrypter(): void
     {
         $app = $this->app([

@@ -2,10 +2,10 @@
 
 A small PHP framework you can read in one sitting.
 
-Routing, a PSR-11 container, real middleware, validation, an extensible jQuery
-layer and an optional Active Record layer. No facades, no global helpers, no
-build step. Works as a JSON API, a server-rendered site, or one process doing
-both.
+Routing, a PSR-11 container, real middleware, validation, a console, cache,
+events, authenticated encryption, an extensible jQuery layer and an optional
+Active Record layer. No facades, no global helpers, no build step. Works as a
+JSON API, a server-rendered site, or one process doing both.
 
 ```php
 $routes->get('/posts/{id}', [PostController::class, 'show'],
@@ -167,7 +167,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Testing
 
-458 tests. They run against SQLite by default, nothing to install, and the
+688 tests. They run against SQLite by default, nothing to install, and the
 same suite runs against MySQL 8 and Postgres 16, because the interesting bugs
 only exist on a database you did not develop on. Postgres rejects the backticks
 MySQL requires; MySQL commits implicitly on DDL and hands back every column as a
@@ -178,9 +178,13 @@ make db-up && make test-drivers
 ```
 
 The suite is also mutation tested: `bin/mutate` breaks the source one edit at a
-time and checks the tests notice. **317 mutants, 100% killed** across the three
+time and checks the tests notice. **475 mutants, 100% killed** across the three
 drivers. That number is the one worth trusting; a passing suite only proves the
 tests ran.
+
+The skeleton has 26 tests of its own, written on the framework's testing
+toolkit, so "an application built on this is testable" is demonstrated rather
+than asserted.
 
 CI runs the matrix on PHP 8.2, 8.3 and 8.4, plus PHPStan level 6, code style, a
 packaging check, mutation testing, and a `--no-dev` job that boots an API-only

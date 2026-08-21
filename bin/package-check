@@ -103,7 +103,7 @@ file_put_contents($file, json_encode($c, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLAS
 
 say "Booting it"
 
-(cd "$WORK/app" && php database/migrate.php > /dev/null) && ok "migrations run" || bad "migrations failed"
+(cd "$WORK/app" && ./phpvin migrate > /dev/null 2>&1) && ok "migrations run" || bad "migrations failed"
 
 (cd "$WORK/app" && php -S "localhost:$PORT" -t public > "$WORK/server.log" 2>&1) &
 SERVER_PID=$!
