@@ -39,6 +39,17 @@ bad() { printf '  \033[31mFAIL\033[0m  %s\n' "$*"; FAILURES=$((FAILURES + 1)); }
 
 FAILURES=0
 
+# bin/mutate rewrites src/ for the length of its run, and the working-tree
+# fallback below would package whichever mutant happened to be applied. That
+# produced a failing check during development that had nothing to do with the
+# package.
+LOCK="${TMPDIR:-/tmp}/phpvin-mutate.lock"
+if [ -f "$LOCK" ] && kill -0 "$(cat "$LOCK" 2>/dev/null)" 2>/dev/null; then
+    printf '\033[31mbin/package-check cannot run while bin/mutate is going (pid %s).\033[0m\n' "$(cat "$LOCK")" >&2
+    printf 'It would package whichever mutant is applied right now.\n' >&2
+    exit 3
+fi
+
 say "Building the distributable package"
 
 mkdir -p "$WORK/phpvin" "$WORK/app"

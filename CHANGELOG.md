@@ -88,6 +88,17 @@ kept in full: the point of a first changelog is not to look uneventful.
 
 ### Fixed
 
+- **The development tools could mislead each other.** `bin/mutate` rewrites
+  `src/` hundreds of times per run, so anything else reading the tree meanwhile
+  reads a deliberate lie and reports it as a finding. Both failure modes
+  happened here, to the person who had written the warning against them: a
+  concurrent `bin/fuzz` reported a `TypeError` that did not exist, and
+  `bin/package-check` packaged a mutated source and failed. A mutation run now
+  takes a lock, and `bin/fuzz`, `bin/differential`, `bin/memory`,
+  `bin/package-check` and a second `bin/mutate` all refuse while it is held,
+  saying why. A lock left by a killed run is reclaimed automatically.
+
+
 - **A failed render leaked its layout.** `PhpEngine` pushes a template's layout
   request before evaluating it and takes it off after, so a template that threw
   in between left the request on the stack with nothing to ever remove it.

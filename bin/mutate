@@ -42,6 +42,43 @@ require $root . '/vendor/autoload.php';
  */
 $GLOBALS['mutating'] = null;
 
+/**
+ * While a run is going, `src/` on disk is not what git says it is: a mutant is
+ * applied and taken back off hundreds of times. Anything else reading the tree
+ * meanwhile sees a deliberate lie and reports it as a finding -- during this
+ * framework's own development a concurrent `bin/fuzz` reported a TypeError
+ * that did not exist, and a `bin/package-check` packaged a mutated source and
+ * failed. Both cost more time than the runs they overlapped.
+ *
+ * A note in CONTRIBUTING did not prevent either, so the lock is enforced here.
+ * It carries the pid, and a stale one from a killed run is reclaimed rather
+ * than requiring a human to delete a file.
+ */
+$lockPath = sys_get_temp_dir() . '/phpvin-mutate.lock';
+
+$staleLock = static function (string $path): bool {
+    $pid = (int) @file_get_contents($path);
+
+    // Signal 0 tests for the process without touching it.
+    return $pid <= 0 || ! posix_kill($pid, 0);
+};
+
+if (file_exists($lockPath) && ! $staleLock($lockPath)) {
+    fwrite(STDERR, sprintf(
+        "\033[31mAnother mutation run is in progress (pid %s).\033[0m\n"
+        . "Two runs would mutate the same files and report each other's edits as findings.\n",
+        trim((string) @file_get_contents($lockPath)),
+    ));
+
+    exit(3);
+}
+
+file_put_contents($lockPath, (string) getmypid());
+
+register_shutdown_function(static function () use ($lockPath): void {
+    @unlink($lockPath);
+});
+
 $restore = static function (): void {
     $state = $GLOBALS['mutating'] ?? null;
 
@@ -57,8 +94,9 @@ if (function_exists('pcntl_async_signals')) {
     pcntl_async_signals(true);
 
     foreach ([SIGINT, SIGTERM, SIGHUP] as $signal) {
-        pcntl_signal($signal, static function () use ($restore): void {
+        pcntl_signal($signal, static function () use ($restore, $lockPath): void {
             $restore();
+            @unlink($lockPath);
 
             fwrite(STDERR, "\ninterrupted: the source has been put back\n");
 
