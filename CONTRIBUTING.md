@@ -138,6 +138,26 @@ Keep these tests small. Mutation testing reruns the suite hundreds of times, so
 a dozen spawned processes per run is a real cost. Verify at a high worker
 count, then turn it down and leave a note saying what it was verified at.
 
+### Memory retention
+
+`bin/memory` measures what a booted application retains per request. Growth is
+counted after a warm-up, because the first few hundred requests are one-time
+allocations (autoloaded classes, the container's shared instances), and
+counting those as a leak would condemn every framework ever written.
+
+```bash
+make memory
+```
+
+The bar is bytes, not kilobytes: a worker handling a million requests a day
+turns 64 retained bytes per request into 64MB.
+
+Same rule as the other harnesses: a profiler reporting zero everywhere is
+exactly when to distrust it. Introduce a leak on purpose, confirm it is caught,
+then take it back out. This one has been checked twice that way, and the second
+check was a real bug: a template that threw after asking for a layout never had
+its request taken off the stack.
+
 ### Packaging
 
 There is a fourth check worth running when you touch anything outside `src/`:

@@ -252,6 +252,25 @@ jobs:
       # A fresh seed each run, so it keeps exploring query shapes.
       - run: ./bin/differential --queries=3000
 
+  memory:
+    runs-on: ubuntu-latest
+    name: Framework / memory retention
+    needs: [test]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: pdo, pdo_sqlite
+          coverage: none
+
+      - run: composer install --prefer-dist --no-interaction --no-progress
+
+      # Fails if any path retains more than 1KB per thousand requests.
+      - run: ./bin/memory --requests=20000
+
   mutation:
     runs-on: ubuntu-latest
     name: Framework / mutation testing
