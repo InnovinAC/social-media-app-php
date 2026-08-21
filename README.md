@@ -99,6 +99,7 @@ $app->run();
 | [The jQuery layer](docs/jquery.md) | attributes, behaviours, server-driven commands |
 | [Configuration](docs/configuration.md) | every option, and the container |
 | [Testing](docs/testing.md) | the toolkit for testing applications built on phpvin |
+| [Console](docs/console.md) | migrate, route:list, make, and writing your own |
 
 ## What's in the box
 
@@ -117,6 +118,7 @@ $app->run();
 | `SecurityHeaders` / `ThrottleRequests` | the defaults an app should not have to write |
 | `FileLogger` | PSR-3, so failures are recorded out of the box |
 | `ApplicationTestCase` | test your app through the real stack, with CSRF and sessions handled |
+| `Console` | `migrate`, `route:list`, `make`, `about`, `serve`, plus your own |
 
 ## Working on the framework itself
 

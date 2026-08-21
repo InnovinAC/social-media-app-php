@@ -1,0 +1,13 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+require __DIR__ . '/vendor/autoload.php';
+
+use Phpvin\Console\Console;
+
+/** @var Phpvin\Application $app */
+$app = require __DIR__ . '/bootstrap.php';
+
+exit((new Console($app))->run($argv));
