@@ -98,6 +98,7 @@ $app->run();
 | [Middleware](docs/middleware.md) | the pipeline, CSRF, security headers, throttling, errors |
 | [The jQuery layer](docs/jquery.md) | attributes, behaviours, server-driven commands |
 | [Configuration](docs/configuration.md) | every option, and the container |
+| [Testing](docs/testing.md) | the toolkit for testing applications built on phpvin |
 
 ## What's in the box
 
@@ -115,6 +116,7 @@ $app->run();
 | `phpvin.js` | declarative AJAX, custom behaviours, server-driven commands |
 | `SecurityHeaders` / `ThrottleRequests` | the defaults an app should not have to write |
 | `FileLogger` | PSR-3, so failures are recorded out of the box |
+| `ApplicationTestCase` | test your app through the real stack, with CSRF and sessions handled |
 
 ## Working on the framework itself
 
@@ -174,16 +176,27 @@ CI runs the matrix on PHP 8.2, 8.3 and 8.4, plus PHPStan level 6, code style, a
 packaging check, mutation testing, and a `--no-dev` job that boots an API-only
 app with no optional package installed.
 
-Because nothing reaches for a global, testing a controller is just calling it:
+### Testing your own application
+
+Because nothing reaches for a global, a request is just a function call, and
+the framework ships the toolkit that builds on it:
 
 ```php
-$app = new Application(__DIR__, ['views' => ['engine' => 'none'], 'providers' => []]);
-$app->router()->get('/health', fn (): array => ['status' => 'ok']);
-
-$response = $app->handle(Request::create('GET', '/health'));
-
-$this->assertSame('{"status":"ok"}', $response->body());
+final class NotesTest extends ApplicationTestCase
+{
+    public function test_a_note_can_be_added(): void
+    {
+        $this->withSession(['user_id' => 1])
+            ->post('/notes', ['body' => 'hello'])
+            ->assertRedirect('/dashboard')
+            ->assertSessionHas('success');
+    }
+}
 ```
+
+No HTTP server, no superglobals, no browser driver. The CSRF token is attached
+for you, the session persists between requests, and a failing assertion prints
+the body it actually got. See [docs/testing.md](docs/testing.md).
 
 ## Requirements
 

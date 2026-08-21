@@ -175,6 +175,12 @@ jobs:
           composer install --prefer-dist --no-interaction --no-progress
           cp .env.example .env
 
+      # The application's own suite, written on the framework's testing
+      # toolkit. This is the proof that an app built on phpvin is testable.
+      - name: Run the application test suite
+        working-directory: skeleton
+        run: ./vendor/bin/phpunit
+
       - name: Migrate and smoke test
         working-directory: skeleton
         run: |
