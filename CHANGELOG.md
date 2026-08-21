@@ -5,7 +5,15 @@ All notable changes to this project are recorded here. The format follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html), with the usual
 pre-1.0 caveat that the API may still move.
 
-## [Unreleased]
+## [0.1.0] - 2026-08-21
+
+First release. Routing, a PSR-11 container, middleware, validation, an
+extensible jQuery layer, pluggable view engines, an optional Active Record
+layer, a console, cache, events and authenticated encryption.
+
+Everything below was written before any version existed, so it is all part of
+this release rather than a history of changes to one. The security entries are
+kept in full: the point of a first changelog is not to look uneventful.
 
 ### Added
 
@@ -156,9 +164,3 @@ pre-1.0 caveat that the API may still move.
 - `psr/log` is now a required dependency, alongside `psr/container`.
 - PHPStan level 6 and a PHP-CS-Fixer ruleset run in CI. `composer check` runs
   everything CI runs.
-
-## [0.1.0]
-
-First release. Routing, a PSR-11 container, middleware, validation, an
-extensible jQuery layer, pluggable view engines, and an optional Active Record
-layer.
