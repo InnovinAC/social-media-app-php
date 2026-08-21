@@ -29,8 +29,10 @@ return [
     'base_url' => $_ENV['APP_URL'] ?? '',
 
     // Seals cookies and anything else you hand to the Encrypter. Generate one
-    // with `./phpvin key:generate`, there is deliberately no default.
-    'key' => $_ENV['APP_KEY'] ?? null,
+    // with `./phpvin key:generate`. There is deliberately no default.
+    // `?:` not `??`: a stock .env ships `APP_KEY=` with nothing after it,
+    // which is absent rather than a zero-length key.
+    'key' => ($_ENV['APP_KEY'] ?? '') ?: null,
 
     // Left empty, asset() emits relative paths, which survive being reached on
     // a different host or port. Set it only when assets live on a CDN.

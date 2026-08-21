@@ -10,3 +10,5 @@
 /public/js/jquery.min.js
 storage/logs/
 storage/rate-limit/
+skeleton/.phpunit.cache/
+.phpunit.cache/

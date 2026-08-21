@@ -322,10 +322,13 @@ final class Application
         $this->container->singleton(
             Encrypter::class,
             fn (): Encrypter => Encrypter::fromKey(
-                (string) ($this->config('key') ?? throw new RuntimeException(
+                // An empty string counts as absent: a blank APP_KEY line is
+                // a key nobody set, and "must be 32 bytes, got 0" is a worse
+                // thing to read than being told how to make one.
+                ((string) ($this->config('key') ?? '')) ?: throw new RuntimeException(
                     'No encryption key is configured. Generate one with '
-                    . 'Phpvin\\Crypto\\Encrypter::generateKey() and set it as `key` in your config.',
-                )),
+                    . '`phpvin key:generate`, or set `key` in your config.',
+                ),
             ),
         );
 
