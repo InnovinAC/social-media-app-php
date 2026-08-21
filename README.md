@@ -167,7 +167,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Testing
 
-688 tests. They run against SQLite by default, nothing to install, and the
+727 tests. They run against SQLite by default, nothing to install, and the
 same suite runs against MySQL 8 and Postgres 16, because the interesting bugs
 only exist on a database you did not develop on. Postgres rejects the backticks
 MySQL requires; MySQL commits implicitly on DDL and hands back every column as a
@@ -178,7 +178,7 @@ make db-up && make test-drivers
 ```
 
 The suite is also mutation tested: `bin/mutate` breaks the source one edit at a
-time and checks the tests notice. **475 mutants, 100% killed** across the three
+time and checks the tests notice. **490 mutants, 100% killed** across the three
 drivers. That number is the one worth trusting; a passing suite only proves the
 tests ran.
 
@@ -258,9 +258,43 @@ To use the skeleton as a starting point once published, delete the
 
 ## Status
 
-Early. The API may still move before 1.0. It is tested and it works, but it has
-not been through a production year yet, treat it accordingly.
-[CHANGELOG.md](CHANGELOG.md) records what has moved.
+Early. The API may still move before 1.0. [CHANGELOG.md](CHANGELOG.md) records
+what has moved.
+
+### How solid is it, honestly
+
+"Battle-tested" gets used for two different things, and it is worth being
+precise about which one this has.
+
+The first is engineering rigour, and that is measurable. Every merge runs 727
+tests against SQLite, MySQL 8 and Postgres 16, on PHP 8.2, 8.3 and 8.4. Every
+mutant of the source, 475 of them, is killed by the suite on all three
+drivers, which means there is no line you can silently change and still go
+green. PHPStan runs at level 6. `bin/package-check` builds the distribution the
+way `.gitattributes` says it ships, installs it as a real copy rather than a
+symlink, and boots it, because a path repository hides a whole class of
+packaging mistake. [SECURITY.md](SECURITY.md) states the threat model as a
+table you can check against the code.
+
+That regime finds real defects rather than decorating passing tests. The query
+builder was wholly broken on Postgres. Transaction depth desynced on MySQL.
+`false` bound as an empty string. A blank `APP_KEY` turned every request into a
+500. A template name from a URL could walk out of the view directory and be
+executed. Each of those was caught here, before a release, by a check in that
+list.
+
+The second meaning is production years: a thousand applications finding the
+edges you did not think of, a decade of CVEs teaching the framework where its
+soft spots are. Laravel and Symfony have that. phpvin does not, and no amount
+of internal testing substitutes for it. What it can do is inherit the lesson
+rather than the scar: the security work here is organised around the failure
+classes that have produced advisories in other PHP frameworks, which is why
+the threat model is written as attack classes rather than as a feature list.
+
+So: rigorously engineered, and young. If you are choosing a framework to run
+a bank on this year, run Symfony. If you want something you can read end to
+end, that will tell you the truth about what it does and does not defend, and
+that fails loudly rather than quietly: that is what this is for.
 
 ## License
 
