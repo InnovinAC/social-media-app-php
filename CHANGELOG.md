@@ -36,6 +36,37 @@ pre-1.0 caveat that the API may still move.
 - **Query counting.** `Connection::queryCount()` and an optional query log, so
   "is this N+1?" is something a test can assert.
 
+### Added
+
+- **`bin/fuzz`.** Hostile input at fourteen entry points: routing, request
+  parsing, URL generation, template resolution, response headers, validation,
+  identifier quoting, cache keys and the encrypter. Each is held to one rule:
+  reject whatever you like, but reject it *deliberately*. A documented
+  exception passes; a `TypeError` or `Error` is a value that reached code
+  assuming it could not exist. Seeded, so a failure replays exactly, and run
+  in CI with a fresh seed each time so it keeps exploring rather than
+  re-testing what it already covered.
+- **Exhaustive tamper detection.** The encryption tests no longer only round
+  trip. They walk every bit of every sealed payload (nonce, tag, ciphertext),
+  flip it, and require all of them to fail to open, on both backends. Plus
+  truncation at every length, cipher downgrade, and a wrong key.
+
+### Fixed
+
+- **`bin/mutate` could leave a mutant in the working tree.** A mutant is a
+  deliberate edit to a real file, and the restore had no `finally` and no
+  signal handling despite a comment claiming it always ran. A run stopped part
+  way (Ctrl-C, a CI timeout, a throw from the runner) left the source quietly
+  wrong, so later test runs failed for a reason that was not in git and the
+  failure got attributed to whatever was edited next. This actually happened
+  during development: a run killed at a ten-minute limit left an inverted
+  comparison behind, the next run mutated it *back* to the correct code and
+  reported that as a surviving mutant, and the score was an artifact of
+  corrupted source. Restores now run in a `finally`, on `SIGINT`/`SIGTERM`/
+  `SIGHUP`, and at shutdown; and every file is hashed before the run and
+  verified after, so a restore that silently does not happen is a loud
+  `exit 2` rather than a wrong number.
+
 ### Security
 
 - **Template path traversal (pre-release).** Template names reach an engine

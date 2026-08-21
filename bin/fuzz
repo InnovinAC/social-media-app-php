@@ -1,0 +1,403 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+/**
+ * Throw hostile input at every parser and assert it fails on purpose.
+ *
+ * A framework's tests check the inputs its author thought of. Production
+ * checks the ones nobody thought of, which is most of what "battle-tested"
+ * turns out to mean. This closes some of that distance deliberately: it
+ * generates input no reasonable caller would send and holds every entry point
+ * to one rule --
+ *
+ *     Reject whatever you like, but reject it *deliberately*.
+ *
+ * A documented exception is a pass; the input was understood and refused. A
+ * TypeError, ValueError, Error or fatal is a failure, because it means the
+ * value reached code that had assumed it could not exist. That distinction is
+ * the whole point: it separates "we handle this" from "we happen to survive
+ * this".
+ *
+ *   bin/fuzz                 5000 cases from a random seed
+ *   bin/fuzz --seed=12345    reproduce a reported failure exactly
+ *   bin/fuzz --cases=50000   longer soak
+ */
+
+require __DIR__ . '/../vendor/autoload.php';
+
+use Phpvin\Cache\FileStore;
+use Phpvin\Cache\InvalidCacheKey;
+use Phpvin\Cache\Ttl;
+use Phpvin\Crypto\DecryptionFailed;
+use Phpvin\Crypto\Encrypter;
+use Phpvin\Database\Grammar\SqliteGrammar;
+use Phpvin\Http\HttpException;
+use Phpvin\Http\Request;
+use Phpvin\Http\Response;
+use Phpvin\Routing\Router;
+use Phpvin\Routing\UrlGenerator;
+use Phpvin\Validation\Validator;
+use Phpvin\View\TemplatePath;
+
+$options = getopt('', ['seed::', 'cases::', 'quiet']);
+$seed = isset($options['seed']) ? (int) $options['seed'] : random_int(1, PHP_INT_MAX);
+$cases = isset($options['cases']) ? (int) $options['cases'] : 5000;
+$quiet = isset($options['quiet']);
+
+mt_srand($seed);
+
+/**
+ * A warning is the interpreter saying it carried on with a value it did not
+ * like. That is the same class of finding as a TypeError -- something reached
+ * code that had not accounted for it -- so it is promoted to an exception and
+ * reported the same way.
+ *
+ * The `error_reporting()` check honours the `@` operator, which the framework
+ * uses deliberately where a failure is expected and handled: a cache file that
+ * is not there yet is not a bug.
+ */
+set_error_handler(static function (int $severity, string $message, string $file, int $line): bool {
+    if ((error_reporting() & $severity) === 0) {
+        return true;
+    }
+
+    throw new ErrorException($message, 0, $severity, $file, $line);
+});
+
+/**
+ * Values chosen to break assumptions rather than to look random: the encodings
+ * that have historically slipped past one layer and meant something else to
+ * the next.
+ */
+function hostile(): string
+{
+    static $corpus = [
+        '', ' ', '0', '-1', '00', '+0', '-0',
+        "\0", "a\0b", "\r\n", "\n", "\r", "\t", "\x0b\x0c",
+        '../', '../../etc/passwd', '..\\..\\windows', '%2e%2e%2f', '....//',
+        '/', '//', '///', '/.', '/./', '/..',
+        "'", '"', '`', "' OR '1'='1", '; DROP TABLE users --', '\\', '\\\\',
+        '<script>', '</script>', '&lt;', '&#x3c;', '{{7*7}}', '${x}', '<%= %>',
+        '%s', '%n', '%00', '%%', '{}', '[]', '()',
+        "\xC0\x80", "\xE0\x80\x80", "\xFF\xFE", "\xED\xA0\x80", "\xF4\x90\x80\x80",
+        'ﬁ', 'İ', 'ß', '👨‍👩‍👧‍👦', "e\u{0301}", "\u{202E}gnp.exe",
+        '-9223372036854775808', '9223372036854775807', '1e309', 'NaN', 'INF',
+        '0x41', '0b1', '0o7', '1_000',
+        'null', 'true', 'false', 'undefined', 'NULL',
+        '__proto__', 'constructor', 'prototype', '__halt_compiler',
+        'O:8:"stdClass":0:{}', 'a:1:{i:0;i:1;}',
+        '{}()/\\@:', '{', '}', '@', ':',
+    ];
+
+    $pick = $corpus[mt_rand(0, count($corpus) - 1)];
+
+    return match (mt_rand(0, 9)) {
+        0 => str_repeat($pick === '' ? 'a' : $pick, mt_rand(2, 500)),
+        1 => $pick . hostile_short(),
+        2 => hostile_short() . $pick,
+        3 => random_bytes(mt_rand(1, 64)),
+        default => $pick,
+    };
+}
+
+function hostile_short(): string
+{
+    static $bits = ['a', '/', '.', "\0", '%', '..', '-', "\n"];
+
+    return $bits[mt_rand(0, count($bits) - 1)];
+}
+
+/** @var list<array{name: string, allowed: list<class-string>, run: Closure(string): void}> $targets */
+$targets = [];
+
+// --- routing ---------------------------------------------------------------
+
+$router = new Router();
+$router->get('/', fn (): Response => new Response());
+$router->get('/users/{id}', fn (): Response => new Response(), where: ['id' => '\d+']);
+$router->get('/files/{path*}', fn (): Response => new Response());
+$router->post('/users', fn (): Response => new Response(), as: 'users.store');
+
+$targets[] = [
+    'name' => 'Router::resolve (path)',
+    'allowed' => [HttpException::class],
+    'run' => function (string $input) use ($router): void {
+        $router->resolve(Request::create('GET', $input));
+    },
+];
+
+$targets[] = [
+    'name' => 'Router::resolve (method)',
+    'allowed' => [HttpException::class],
+    'run' => function (string $input) use ($router): void {
+        $router->resolve(Request::create($input, '/users/1'));
+    },
+];
+
+$targets[] = [
+    'name' => 'Request::create (path)',
+    'allowed' => [],
+    'run' => function (string $input): void {
+        $request = Request::create('GET', $input, [$input => $input], [$input => $input]);
+        $request->input($input);
+        $unused = $request->path;
+        $request->isMethod($input);
+    },
+];
+
+$urls = new UrlGenerator($router, 'https://example.test');
+
+$targets[] = [
+    'name' => 'UrlGenerator::route',
+    'allowed' => [InvalidArgumentException::class],
+    'run' => function (string $input) use ($urls): void {
+        $urls->route($input, [$input => $input]);
+        $urls->route('users.store', [$input => $input]);
+        $urls->asset($input);
+    },
+];
+
+// --- views -----------------------------------------------------------------
+
+$targets[] = [
+    'name' => 'TemplatePath::resolve',
+    'allowed' => [],
+    'run' => function (string $input): void {
+        $path = TemplatePath::resolve(__DIR__, $input, '.php');
+
+        if ($path === null) {
+            return;
+        }
+
+        // The guarantee, restated as an assertion: whatever comes back is
+        // inside the root. Comparing the raw string would not do it --
+        // "/root/../etc/passwd" starts with "/root" and is nowhere near it --
+        // so the dot segments have to be collapsed first. That has to happen
+        // textually, because the path is allowed not to exist yet.
+        $segments = [];
+
+        foreach (explode('/', $path) as $segment) {
+            if ($segment === '..') {
+                array_pop($segments);
+            } elseif ($segment !== '.') {
+                $segments[] = $segment;
+            }
+        }
+
+        $canonical = implode('/', $segments);
+
+        if (! str_starts_with($canonical, (string) realpath(__DIR__) . '/')) {
+            throw new RuntimeException("escaped the root: $input -> $canonical");
+        }
+    },
+];
+
+// --- http responses --------------------------------------------------------
+
+$targets[] = [
+    'name' => 'Response::header',
+    'allowed' => [InvalidArgumentException::class],
+    'run' => function (string $input): void {
+        $response = (new Response())->header($input, $input);
+
+        // A value that was accepted must be safe to emit.
+        if (preg_match('/[\r\n\0]/', (string) $response->getHeader($input)) === 1) {
+            throw new RuntimeException('accepted a header value containing a control character');
+        }
+    },
+];
+
+// --- validation ------------------------------------------------------------
+
+$validator = new Validator();
+$rules = [
+    'required', 'email', 'url', 'numeric', 'integer', 'boolean', 'alpha',
+    'alpha_num', 'alpha_dash', 'min:3', 'max:10', 'between:1,5', 'in:a,b',
+    'confirmed', 'same:other', 'different:other', 'regex:/^a+$/', 'date',
+    'nullable', 'file', 'image', 'mimes:png',
+];
+
+$targets[] = [
+    'name' => 'Validator::check (values)',
+    'allowed' => [],
+    'run' => function (string $input) use ($validator, $rules): void {
+        $rule = $rules[mt_rand(0, count($rules) - 1)];
+        $validator->check(['field' => $input, 'other' => $input], ['field' => $rule]);
+    },
+];
+
+$targets[] = [
+    'name' => 'Validator::check (rule strings)',
+    'allowed' => [InvalidArgumentException::class],
+    'run' => function (string $input) use ($validator): void {
+        $validator->check(['field' => 'value'], ['field' => $input]);
+    },
+];
+
+// --- database --------------------------------------------------------------
+
+$grammar = new SqliteGrammar();
+
+$targets[] = [
+    'name' => 'Grammar::quote',
+    'allowed' => [InvalidArgumentException::class],
+    'run' => function (string $input) use ($grammar): void {
+        $quoted = $grammar->quote($input);
+
+        // An identifier that was accepted must not be able to end its own
+        // quoting and start being SQL.
+        if (str_contains(substr($quoted, 1, -1), '"')) {
+            throw new RuntimeException("quoting did not contain the identifier: $quoted");
+        }
+    },
+];
+
+// --- cache -----------------------------------------------------------------
+
+$targets[] = [
+    'name' => 'Ttl::validateKey',
+    'allowed' => [InvalidCacheKey::class],
+    'run' => function (string $input): void {
+        Ttl::validateKey($input);
+
+        if ($input === '' || strpbrk($input, '{}()/\@:') !== false) {
+            throw new RuntimeException('accepted a key PSR-16 reserves');
+        }
+    },
+];
+
+$cacheDirectory = sys_get_temp_dir() . '/phpvin-fuzz-' . bin2hex(random_bytes(6));
+$cache = new FileStore($cacheDirectory, null, 'a-fuzzing-secret');
+
+$targets[] = [
+    'name' => 'FileStore round trip',
+    'allowed' => [InvalidCacheKey::class],
+    'run' => function (string $input) use ($cache): void {
+        // The key may be refused; the *value* never may. Anything serialisable
+        // has to survive being authenticated and come back identical.
+        $cache->set($input, ['value' => $input]);
+
+        if ($cache->get($input) !== ['value' => $input]) {
+            throw new RuntimeException('a cached value did not come back intact');
+        }
+    },
+];
+
+$targets[] = [
+    'name' => 'FileStore corrupt entry',
+    'allowed' => [InvalidCacheKey::class],
+    'run' => function (string $input) use ($cache, $cacheDirectory): void {
+        $cache->set('victim', 'genuine');
+
+        // A *well-formed* forgery, not just noise. Random bytes almost never
+        // survive unserialize(), so writing them proves nothing: the read
+        // would miss whether or not anything was authenticating it. The
+        // payload has to be one that would work perfectly if the MAC were not
+        // checked, which is what an attacker would actually write.
+        $forged = 'FORGED-' . bin2hex(substr($input, 0, 8));
+
+        foreach (glob($cacheDirectory . '/*.cache') ?: [] as $file) {
+            file_put_contents(
+                $file,
+                mt_rand(0, 1) === 0
+                    ? '0000000000' . serialize($forged)
+                    : '0000000000' . str_repeat('0', 64) . serialize($forged),
+            );
+        }
+
+        $read = $cache->get('victim', 'MISS');
+
+        if ($read !== 'MISS' && $read !== 'genuine') {
+            throw new RuntimeException('returned a forged value: ' . var_export($read, true));
+        }
+    },
+];
+
+// --- crypto ----------------------------------------------------------------
+
+$encrypter = Encrypter::fromKey(Encrypter::generateKey());
+
+$targets[] = [
+    'name' => 'Encrypter::decrypt',
+    'allowed' => [DecryptionFailed::class],
+    'run' => function (string $input) use ($encrypter): void {
+        $encrypter->decrypt($input);
+
+        throw new RuntimeException('opened a payload it never sealed');
+    },
+];
+
+$targets[] = [
+    'name' => 'Encrypter round trip',
+    'allowed' => [],
+    'run' => function (string $input) use ($encrypter): void {
+        if ($encrypter->decrypt($encrypter->encrypt($input)) !== $input) {
+            throw new RuntimeException('a sealed value did not come back intact');
+        }
+    },
+];
+
+// --- run -------------------------------------------------------------------
+
+$failures = [];
+$run = 0;
+
+foreach ($targets as $target) {
+    $perTarget = (int) ceil($cases / count($targets));
+
+    for ($i = 0; $i < $perTarget; $i++) {
+        $input = hostile();
+        $run++;
+
+        try {
+            ($target['run'])($input);
+        } catch (Throwable $e) {
+            $expected = false;
+
+            foreach ($target['allowed'] as $class) {
+                if ($e instanceof $class) {
+                    $expected = true;
+
+                    break;
+                }
+            }
+
+            if (! $expected) {
+                $key = $target['name'] . '|' . $e::class . '|' . $e->getMessage();
+
+                $failures[$key] ??= [
+                    'target' => $target['name'],
+                    'exception' => $e::class,
+                    'message' => $e->getMessage(),
+                    'at' => basename($e->getFile()) . ':' . $e->getLine(),
+                    'input' => $input,
+                ];
+            }
+        }
+    }
+}
+
+if (! $quiet) {
+    printf("seed %d, %d cases across %d entry points\n", $seed, $run, count($targets));
+}
+
+if ($failures === []) {
+    printf("\033[32mNo input reached code that did not expect it.\033[0m\n");
+
+    exit(0);
+}
+
+printf("\n\033[31m%d distinct failure(s):\033[0m\n\n", count($failures));
+
+foreach ($failures as $failure) {
+    printf("  %s\n", $failure['target']);
+    printf("    %s at %s\n", $failure['exception'], $failure['at']);
+    printf("    %s\n", $failure['message']);
+    printf("    input: %s\n\n", var_export($failure['input'], true));
+}
+
+printf("Reproduce with: bin/fuzz --seed=%d\n", $seed);
+
+exit(1);

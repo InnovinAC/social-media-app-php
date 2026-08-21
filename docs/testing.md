@@ -90,6 +90,38 @@ Got 200 with body:
 That is deliberate. "Failed asserting that 500 matches 200" tells you a test
 broke; it does not tell you your migration threw.
 
+## Fuzzing your own parsers
+
+The framework ships `bin/fuzz`, which throws input no reasonable caller would
+send at every parser it owns and requires each one to fail *deliberately*: a
+documented exception is a pass, a `TypeError` is not. If your application has a
+parser of its own (a webhook body, an import file, a signed URL), the same
+harness shape is worth copying:
+
+```php
+foreach ($cases as $input) {
+    try {
+        $parser->parse($input);
+    } catch (MalformedWebhook) {
+        // Fine: understood and refused.
+    } catch (Throwable $e) {
+        $this->fail(sprintf(
+            '%s reached code that did not expect it: %s',
+            var_export($input, true),
+            $e->getMessage(),
+        ));
+    }
+}
+```
+
+The value is in the second `catch`. Asserting that bad input throws proves very
+little, because almost anything throws on bad input; asserting *which* error it
+throws is what separates a case you handled from one you happened to survive.
+
+One caution learned the hard way: check that the harness can actually fail.
+Break the guard on purpose, confirm it gets caught, then put it back. An
+assertion too weak to fail reads as coverage while providing none.
+
 ## What this does not do
 
 There is no browser automation and no JavaScript execution. The AJAX layer is
