@@ -32,7 +32,7 @@ final class NotesController
         private readonly Auth $auth,
     ) {}
 
-    public function store(Request $request): Response|Commands
+    public function store(Request $request): Response
     {
         $data = $this->validator->validate($request->all(), [
             'body' => 'required|max:200',
@@ -46,12 +46,15 @@ final class NotesController
             return new RedirectResponse('/dashboard', 303);
         }
 
+        // toResponse() rather than returning the builder, so the status says
+        // a resource was created instead of defaulting to 200.
         return Commands::make()
             ->prepend('#notes', $this->views->render('notes/row', ['note' => $note]))
             ->remove('#empty-state')
             ->text('#note-count', (string) $this->count())
             ->focus('input[name=body]')
-            ->trigger('note:added', ['id' => $note->key()]);
+            ->trigger('note:added', ['id' => $note->key()])
+            ->toResponse(201);
     }
 
     public function destroy(Request $request, int $id): Response|Commands
