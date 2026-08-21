@@ -57,6 +57,52 @@ final class DefaultsAndEdgesTest extends TestCase
     }
 
     #[Test]
+    public function the_session_cookie_defaults_are_the_safe_ones(): void
+    {
+        $cookie = $this->app()->config('session_cookie');
+
+        $this->assertTrue($cookie['httponly'], 'unreadable from JavaScript');
+        $this->assertSame('Lax', $cookie['samesite'], 'not sent on cross-site requests');
+        $this->assertSame('/', $cookie['path']);
+
+        // Off, because a secure cookie is never sent over plain HTTP and
+        // every local setup would break. Turned on once TLS is real.
+        $this->assertFalse($cookie['secure']);
+    }
+
+    #[Test]
+    public function there_is_no_default_encryption_key(): void
+    {
+        // A key that ships with the framework is a key everybody shares.
+        $this->assertNull($this->app()->config('key'));
+    }
+
+    #[Test]
+    public function asking_for_the_encrypter_without_a_key_says_what_to_do(): void
+    {
+        $app = $this->app(['views' => ['engine' => 'none'], 'providers' => []]);
+
+        $this->expectException(RuntimeException::class);
+        $this->expectExceptionMessage('No encryption key is configured');
+
+        $app->container()->get(\Phpvin\Crypto\Encrypter::class);
+    }
+
+    #[Test]
+    public function a_configured_key_produces_a_working_encrypter(): void
+    {
+        $app = $this->app([
+            'views' => ['engine' => 'none'],
+            'providers' => [],
+            'key' => \Phpvin\Crypto\Encrypter::generateKey(),
+        ]);
+
+        $encrypter = $app->container()->get(\Phpvin\Crypto\Encrypter::class);
+
+        $this->assertSame('works', $encrypter->decrypt($encrypter->encrypt('works')));
+    }
+
+    #[Test]
     public function template_caching_is_off_by_default(): void
     {
         // Compiling every request is slow; a stale cache in development is

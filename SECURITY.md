@@ -45,12 +45,42 @@ Worth knowing what you are and are not getting.
 - `ThrottleRequests` middleware on login and any other guessable endpoint.
 - HSTS, once you are actually serving over HTTPS.
 
+- **Authenticated encryption** via `Encrypter`, XChaCha20-Poly1305 where
+  libsodium is available, AES-256-GCM otherwise. Every payload is encrypted and
+  authenticated, so a modified ciphertext fails to open rather than decrypting
+  to something an attacker chose. Every failure gives the same message, because
+  distinguishable ones are what make a padding oracle work.
+- **Session cookies** are `HttpOnly` and `SameSite=Lax` out of the box, set
+  before the cookie is issued rather than left to php.ini.
+
+**Opt in, and you should**
+
+- `EncryptCookies` middleware. A cookie is a value the client can rewrite;
+  anything you set and later trust has to be sealed. A cookie that fails to
+  decrypt is dropped rather than passed through, so a forged value never
+  reaches application code looking genuine.
+- `session_cookie.secure` once you are on HTTPS. It is off by default because
+  a secure cookie is never sent over plain HTTP, and defaulting it on would
+  silently break every local setup.
+
 **Not provided**
 
-- Encryption at rest, signed cookies, and password reset flows. Build them or
-  bring a library.
+- Password reset flows and email verification. Build them on `Encrypter` and
+  the rate limiter.
 - Output escaping is your template engine's job. Twig escapes by default; the
   `php` engine gives you `$e()` and expects you to use it.
+
+## The encryption key
+
+There is deliberately no default. A key that ships with the framework is a key
+every installation shares, which is the same as having none.
+
+```bash
+./phpvin key:generate
+```
+
+Replacing a live key makes every value sealed with the old one unreadable, so
+the command refuses unless you pass `--force`.
 
 ## Please do not
 

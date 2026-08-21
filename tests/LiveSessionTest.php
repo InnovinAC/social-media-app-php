@@ -36,6 +36,40 @@ final class LiveSessionTest extends TestCase
 
     #[Test]
     #[RunInSeparateProcess]
+    public function the_session_cookie_is_hardened_by_default(): void
+    {
+        (new Session())->start();
+
+        $params = session_get_cookie_params();
+
+        // A session cookie readable from JavaScript is one XSS away from a
+        // stolen account, and one sent cross-site is a CSRF waiting to happen.
+        $this->assertTrue($params['httponly']);
+        $this->assertSame('Lax', $params['samesite']);
+        $this->assertSame('/', $params['path']);
+
+        // Not secure by default: a cookie marked secure is never sent over
+        // plain HTTP, so a default of true would silently break every local
+        // development setup. It is opt-in via config once TLS is real.
+        $this->assertFalse($params['secure']);
+    }
+
+    #[Test]
+    #[RunInSeparateProcess]
+    public function the_session_cookie_settings_can_be_overridden(): void
+    {
+        $session = new Session();
+        $session->useCookieOptions(['secure' => true, 'samesite' => 'Strict']);
+        $session->start();
+
+        $params = session_get_cookie_params();
+
+        $this->assertTrue($params['secure']);
+        $this->assertSame('Strict', $params['samesite']);
+    }
+
+    #[Test]
+    #[RunInSeparateProcess]
     public function values_survive_in_the_real_session_superglobal(): void
     {
         $session = new Session();
