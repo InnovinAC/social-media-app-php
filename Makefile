@@ -18,6 +18,7 @@ help:
 	@echo "lint          Syntax-check every PHP file"
 	@echo "package-check Verify the framework installs and boots as a real dependency"
 	@echo "fuzz          Throw hostile input at every parser"
+	@echo "differential  Run generated queries against every driver and compare"
 	@echo "vendor-js     Download jQuery into the skeleton"
 	@echo "serve         Run the skeleton at http://localhost:8000"
 	@echo "migrate       Apply pending migrations"
@@ -119,6 +120,13 @@ mutate-drivers:
 # so any failure replays exactly.
 fuzz:
 	@./bin/fuzz --cases=50000
+
+.PHONY: differential
+
+# Asks every driver the same generated question and requires one answer. A
+# disagreement is a grammar bug by definition. Needs `make db-up`.
+differential:
+	@./bin/differential --queries=2000
 
 .PHONY: bench
 

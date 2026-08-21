@@ -281,7 +281,19 @@ final class QueryBuilder
 
     // --- ordering and slicing ---------------------------------------------
 
-    public function orderBy(string $column, string $direction = 'asc'): self
+    /**
+     * Order by a column.
+     *
+     * `nulls` decides where nulls go, and on a nullable column you want to say.
+     * Engines disagree about it and disagree silently: SQLite and MySQL treat
+     * null as the smallest value, Postgres as the largest, so `orderBy('score',
+     * 'desc')` puts nulls at opposite ends depending on the driver. Add a
+     * `limit` and the same query returns different rows. Saying `nulls: 'last'`
+     * pins it, and the grammar compiles it for whichever engine you are on.
+     *
+     * @param string|null $nulls 'first', 'last', or null for the engine default
+     */
+    public function orderBy(string $column, string $direction = 'asc', ?string $nulls = null): self
     {
         $direction = strtolower($direction);
 
@@ -289,7 +301,15 @@ final class QueryBuilder
             throw new InvalidArgumentException("Order direction must be asc or desc, got [$direction].");
         }
 
-        $this->orders[] = $this->identifier($column) . ' ' . strtoupper($direction);
+        if ($nulls !== null && ! in_array($nulls = strtolower($nulls), ['first', 'last'], true)) { // mutation:ignore strict flag is equivalent for an array of string literals
+            throw new InvalidArgumentException("Null placement must be first or last, got [$nulls].");
+        }
+
+        $this->orders[] = $this->connection->grammar()->compileOrder(
+            $this->identifier($column),
+            strtoupper($direction),
+            $nulls,
+        );
 
         return $this;
     }
@@ -385,33 +405,27 @@ final class QueryBuilder
 
     public function count(?string $column = null): int
     {
-        $expression = $column === null ? '*' : $this->identifier($column);
-
-        if ($this->distinct && $column !== null) {
-            $expression = "DISTINCT $expression";
-        }
-
-        return (int) $this->aggregate("COUNT($expression)");
+        return (int) $this->aggregate('COUNT', $column, $this->distinct && $column !== null);
     }
 
     public function sum(string $column): float
     {
-        return (float) $this->aggregate('SUM(' . $this->identifier($column) . ')');
+        return (float) $this->aggregate('SUM', $column);
     }
 
     public function avg(string $column): float
     {
-        return (float) $this->aggregate('AVG(' . $this->identifier($column) . ')');
+        return (float) $this->aggregate('AVG', $column);
     }
 
     public function min(string $column): mixed
     {
-        return $this->aggregate('MIN(' . $this->identifier($column) . ')');
+        return $this->aggregate('MIN', $column);
     }
 
     public function max(string $column): mixed
     {
-        return $this->aggregate('MAX(' . $this->identifier($column) . ')');
+        return $this->aggregate('MAX', $column);
     }
 
     public function exists(): bool
@@ -540,12 +554,27 @@ final class QueryBuilder
         return [...self::collectBindings($this->wheres), ...self::collectBindings($this->havings)];
     }
 
-    private function aggregate(string $expression): mixed
+    /**
+     * @param string|null $column   Null aggregates over `*`.
+     * @param bool        $distinct Only meaningful with a column.
+     */
+    private function aggregate(string $function, ?string $column, bool $distinct = false): mixed
     {
         // Aggregating a grouped query counts the groups, not the rows, so the
         // grouped select becomes a subquery.
         if ($this->groups !== []) {
             $inner = $this->toSql();
+
+            // Inside the subquery the columns have lost their table. `SELECT *
+            // FROM posts` exposes `views`, not `posts.views`, and the derived
+            // table is called `grouped`, so carrying the qualifier through
+            // names a table that is not in scope. Every driver rejects it.
+            $expression = $this->aggregateExpression(
+                $function,
+                $column === null ? null : self::withoutQualifier($column),
+                $distinct,
+            );
+
             $row = $this->connection->selectOne(
                 "SELECT $expression AS aggregate FROM ($inner) AS grouped",
                 $this->bindings(),
@@ -554,13 +583,32 @@ final class QueryBuilder
             return $row['aggregate'] ?? null;
         }
 
-        $sql = "SELECT $expression AS aggregate FROM " . $this->identifier($this->table)
+        $sql = 'SELECT ' . $this->aggregateExpression($function, $column, $distinct)
+            . ' AS aggregate FROM ' . $this->identifier($this->table)
             . $this->joinClause()
             . $this->whereClause();
 
         $row = $this->connection->selectOne($sql, self::collectBindings($this->wheres));
 
         return $row['aggregate'] ?? null;
+    }
+
+    private function aggregateExpression(string $function, ?string $column, bool $distinct): string
+    {
+        $inner = $column === null ? '*' : $this->identifier($column);
+
+        return $function . '(' . ($distinct ? "DISTINCT $inner" : $inner) . ')';
+    }
+
+    /**
+     * `posts.views` becomes `views`. Only ever applied where the qualifier is
+     * known to be out of scope.
+     */
+    private static function withoutQualifier(string $column): string
+    {
+        $position = strrpos($column, '.');
+
+        return $position === false ? $column : substr($column, $position + 1);
     }
 
     private function joinClause(): string

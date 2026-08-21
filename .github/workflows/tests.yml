@@ -213,6 +213,45 @@ jobs:
       # re-testing the same ones. A failure prints the seed that produced it.
       - run: ./bin/fuzz --cases=100000
 
+  differential:
+    runs-on: ubuntu-latest
+    name: Framework / cross-driver agreement
+    needs: [test]
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: secret
+          MYSQL_DATABASE: phpvin_test
+        ports: ['33061:3306']
+        options: >-
+          --health-cmd="mysqladmin ping" --health-interval=10s
+          --health-timeout=5s --health-retries=5
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: secret
+          POSTGRES_DB: phpvin_test
+        ports: ['54321:5432']
+        options: >-
+          --health-cmd=pg_isready --health-interval=10s
+          --health-timeout=5s --health-retries=5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: pdo, pdo_sqlite, pdo_mysql, pdo_pgsql
+          coverage: none
+
+      - run: composer install --prefer-dist --no-interaction --no-progress
+
+      # A fresh seed each run, so it keeps exploring query shapes.
+      - run: ./bin/differential --queries=3000
+
   mutation:
     runs-on: ubuntu-latest
     name: Framework / mutation testing

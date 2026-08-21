@@ -130,6 +130,28 @@ Values are always bound, never interpolated. Column and table names are
 validated against a strict pattern before being quoted, so an identifier can
 never be built from user input.
 
+### Ordering a column that can be null
+
+Databases disagree about where a null belongs in a sort, and they disagree
+quietly. SQLite and MySQL treat null as the smallest value, so a descending
+sort puts nulls at the end. Postgres treats it as the largest, so the same sort
+puts them at the front. Nothing errors; you just get a different order, and
+with a `limit` on top, different rows.
+
+Say which you want and it is the same everywhere:
+
+```php
+Post::query()->orderBy('published_at', 'desc', nulls: 'last');
+```
+
+Postgres and SQLite get `NULLS LAST`. MySQL has no such syntax, so it gets the
+sort key that means the same thing. Leave `nulls` off and you get the engine's
+default, which is fine when the column cannot be null and a trap when it can.
+
+This is the sort of difference that surfaces as "the ordering is wrong on
+staging" long after the code was written, so `bin/differential` generates
+null-heavy sorts on purpose and requires every driver to agree.
+
 ## Pagination
 
 ```php

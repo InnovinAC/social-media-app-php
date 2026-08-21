@@ -20,4 +20,20 @@ final class MySqlGrammar extends Grammar
     {
         return false;
     }
+
+    /**
+     * MySQL has no NULLS FIRST/LAST, so the placement is expressed as an extra
+     * sort key: `col IS NULL` is 0 for a value and 1 for a null, which puts
+     * nulls last ascending and first descending.
+     */
+    public function compileOrder(string $quotedColumn, string $direction, ?string $nulls): string
+    {
+        $term = $quotedColumn . ' ' . $direction;
+
+        if ($nulls === null) {
+            return $term;
+        }
+
+        return $quotedColumn . ' IS NULL ' . ($nulls === 'first' ? 'DESC' : 'ASC') . ', ' . $term;
+    }
 }

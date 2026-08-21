@@ -1,0 +1,353 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+/**
+ * Run the same generated query against every driver and require one answer.
+ *
+ * The test suite runs against SQLite, MySQL and Postgres, but it runs the
+ * queries someone sat down and wrote. The dangerous queries are the ones
+ * nobody wrote: the combination of a left join, a group by and an offset that
+ * happens to compile differently on one engine. A hand-written suite finds
+ * those when a user reports them, which is the slow way.
+ *
+ * So the queries are generated instead, and the oracle is agreement. Each
+ * driver is asked the same question and must return the same rows in the same
+ * order. A disagreement is a bug in the grammar layer by definition -- one of
+ * them is wrong, and which one hardly matters, because the promise the
+ * framework makes is that swapping the driver does not change the answer.
+ *
+ *   bin/differential                    500 queries from a random seed
+ *   bin/differential --seed=12345       reproduce a reported disagreement
+ *   bin/differential --drivers=sqlite,pgsql
+ *
+ * Needs MySQL and Postgres running: `make db-up`.
+ */
+
+require __DIR__ . '/../vendor/autoload.php';
+
+use Phpvin\Database\Connection;
+use Phpvin\Database\QueryBuilder;
+
+$options = getopt('', ['seed::', 'queries::', 'drivers::', 'quiet']);
+$seed = isset($options['seed']) ? (int) $options['seed'] : random_int(1, PHP_INT_MAX);
+$count = isset($options['queries']) ? (int) $options['queries'] : 500;
+$quiet = isset($options['quiet']);
+$wanted = explode(',', is_string($options['drivers'] ?? null) ? $options['drivers'] : 'sqlite,mysql,pgsql');
+
+mt_srand($seed);
+
+// --- connect ---------------------------------------------------------------
+
+/** @return array<string, Connection> */
+function connect(array $wanted): array
+{
+    $connections = [];
+
+    foreach ($wanted as $driver) {
+        try {
+            $connections[$driver] = match ($driver) {
+                'sqlite' => Connection::sqliteInMemory(),
+                'mysql' => Connection::fromConfig([
+                    'driver' => 'mysql',
+                    'host' => getenv('DB_HOST') ?: '127.0.0.1',
+                    'port' => getenv('DB_PORT') ?: '33061',
+                    'database' => getenv('DB_DATABASE') ?: 'phpvin_test',
+                    'username' => getenv('DB_USERNAME') ?: 'root',
+                    'password' => getenv('DB_PASSWORD') ?: 'secret',
+                ]),
+                'pgsql' => Connection::fromConfig([
+                    'driver' => 'pgsql',
+                    'host' => getenv('DB_HOST') ?: '127.0.0.1',
+                    'port' => getenv('DB_PORT') ?: '54321',
+                    'database' => getenv('DB_DATABASE') ?: 'phpvin_test',
+                    'username' => getenv('DB_USERNAME') ?: 'postgres',
+                    'password' => getenv('DB_PASSWORD') ?: 'secret',
+                ]),
+                default => throw new RuntimeException("Unknown driver [$driver]."),
+            };
+
+            $connections[$driver]->select('select 1');
+        } catch (Throwable $e) {
+            fwrite(STDERR, sprintf(
+                "\033[33mskipping %s:\033[0m %s\n",
+                $driver,
+                explode("\n", $e->getMessage())[0],
+            ));
+
+            unset($connections[$driver]);
+        }
+    }
+
+    return $connections;
+}
+
+$connections = connect($wanted);
+
+if (count($connections) < 2) {
+    fwrite(STDERR, "Need at least two drivers to compare. Try `make db-up`.\n");
+
+    exit(1);
+}
+
+// --- schema and identical data ---------------------------------------------
+
+/**
+ * The same rows everywhere, written by hand rather than generated, so a
+ * disagreement is never just the two databases holding different data.
+ */
+function seed(Connection $db): void
+{
+    $serial = match ($db->driver()) {
+        'pgsql' => 'serial primary key',
+        'mysql' => 'int auto_increment primary key',
+        default => 'integer primary key autoincrement',
+    };
+
+    foreach (['diff_posts', 'diff_authors'] as $table) {
+        $db->statement("drop table if exists $table");
+    }
+
+    $db->statement("create table diff_authors (id $serial, name varchar(50) not null, tier int not null)");
+    $db->statement(
+        "create table diff_posts (
+            id $serial,
+            author_id int null,
+            title varchar(50) not null,
+            score int null,
+            views int not null
+        )"
+    );
+
+    foreach ([[1, 'ada', 1], [2, 'grace', 2], [3, 'alan', 2], [4, 'edsger', 3]] as [$id, $name, $tier]) {
+        $db->statement('insert into diff_authors (name, tier) values (?, ?)', [$name, $tier]);
+    }
+
+    // Nulls in both a foreign key and a sortable column, because null ordering
+    // and null comparison are exactly where engines part company.
+    $rows = [
+        [1, 'alpha', 10, 100], [1, 'beta', null, 50], [2, 'gamma', 30, 75],
+        [2, 'delta', 5, 75], [3, 'epsilon', 30, 10], [null, 'zeta', 15, 0],
+        [3, 'eta', null, 250], [4, 'theta', 20, 75], [1, 'iota', 45, 5],
+        [null, 'kappa', 5, 300], [4, 'lambda', 30, 75], [2, 'mu', 1, 1],
+    ];
+
+    foreach ($rows as [$author, $title, $score, $views]) {
+        $db->statement(
+            'insert into diff_posts (author_id, title, score, views) values (?, ?, ?, ?)',
+            [$author, $title, $score, $views],
+        );
+    }
+}
+
+foreach ($connections as $db) {
+    seed($db);
+}
+
+// --- query generation ------------------------------------------------------
+
+/**
+ * Build the same query shape against a given connection.
+ *
+ * The shape is decided once from the seeded PRNG and then replayed for each
+ * driver, so every driver is asked an identical question.
+ *
+ * @param  list<array{0: string, 1: array<int, mixed>}> $steps
+ */
+function build(Connection $db, array $steps): QueryBuilder
+{
+    $query = new QueryBuilder($db, 'diff_posts');
+
+    foreach ($steps as [$method, $arguments]) {
+        $query = $query->{$method}(...$arguments);
+    }
+
+    return $query;
+}
+
+/**
+ * @return list<array{0: string, 1: array<int, mixed>}>
+ */
+function shape(): array
+{
+    $steps = [];
+    $columns = ['score', 'views', 'author_id'];
+    $column = $columns[mt_rand(0, 2)];
+    $grouped = false;
+
+    $joined = false;
+
+    if (mt_rand(0, 3) === 0) {
+        $steps[] = ['join', ['diff_authors', 'diff_posts.author_id', '=', 'diff_authors.id']];
+        $joined = true;
+    } elseif (mt_rand(0, 4) === 0) {
+        $steps[] = ['leftJoin', ['diff_authors', 'diff_posts.author_id', '=', 'diff_authors.id']];
+        $joined = true;
+    }
+
+    // `SELECT *` across a join gives two columns called `id`, and `SELECT *`
+    // with a GROUP BY is rejected outright by Postgres and by MySQL under
+    // ONLY_FULL_GROUP_BY. Neither is a portability promise any framework
+    // makes, so naming columns keeps the generator honest: a disagreement
+    // then means the grammar compiled something differently, not that the
+    // query was never valid to begin with.
+    if ($joined) {
+        $steps[] = ['select', [['diff_posts.id', 'diff_posts.title', 'diff_posts.score', 'diff_posts.views']]];
+    }
+
+    foreach (range(0, mt_rand(0, 2)) as $ignored) {
+        $steps[] = match (mt_rand(0, 6)) {
+            0 => ['where', [$column, ['=', '>', '<', '>=', '<=', '!='][mt_rand(0, 5)], mt_rand(0, 40)]],
+            1 => ['orWhere', [$column, '>', mt_rand(0, 40)]],
+            2 => ['whereIn', [$column, [5, 30, mt_rand(0, 45)]]],
+            3 => ['whereNotIn', [$column, [1, mt_rand(0, 45)]]],
+            4 => ['whereNull', [$column]],
+            5 => ['whereNotNull', [$column]],
+            default => ['whereBetween', [$column, mt_rand(0, 20), mt_rand(20, 45)]],
+        };
+    }
+
+    if (mt_rand(0, 4) === 0) {
+        $steps[] = ['select', [['diff_posts.views']]];
+        $steps[] = ['groupBy', ['diff_posts.views']];
+        $grouped = true;
+
+        if (mt_rand(0, 1) === 1) {
+            $steps[] = ['having', ['diff_posts.views', '>', mt_rand(0, 100)]];
+        }
+    }
+
+    if ($grouped) {
+        $steps[] = ['orderBy', ['diff_posts.views', mt_rand(0, 1) === 1 ? 'desc' : 'asc', 'last']];
+    } else {
+        // A total order, so a tie can never be broken differently by two
+        // engines and be reported as a disagreement it is not.
+        if (mt_rand(0, 1) === 1) {
+            // Null placement is pinned rather than left to the engine: the
+            // whole point of this tool is to find grammar bugs, and an
+            // unpinned null sort is a documented divergence that would drown
+            // them out. That divergence has its own test.
+            $steps[] = [
+                'orderBy',
+                [$column, mt_rand(0, 1) === 1 ? 'desc' : 'asc', mt_rand(0, 1) === 1 ? 'first' : 'last'],
+            ];
+        }
+
+        $steps[] = ['orderBy', ['diff_posts.id', 'asc']];
+    }
+
+    if (mt_rand(0, 2) === 0) {
+        $steps[] = ['limit', [mt_rand(1, 8)]];
+
+        if (mt_rand(0, 1) === 1) {
+            $steps[] = ['offset', [mt_rand(0, 4)]];
+        }
+    }
+
+    return $steps;
+}
+
+function describe(array $steps): string
+{
+    return implode('->', array_map(
+        static fn (array $step): string => $step[0] . '(' . implode(', ', array_map(
+            static fn (mixed $a): string => is_array($a) ? '[' . implode(',', array_map(strval(...), $a)) . ']' : var_export($a, true),
+            $step[1],
+        )) . ')',
+        $steps,
+    ));
+}
+
+/**
+ * Rows reduced to what every driver must agree on.
+ *
+ * PDO types differ by engine -- MySQL hands back strings, Postgres reports
+ * booleans as 't' -- and hiding that is the framework's job, not something to
+ * assert here. What has to match is *which rows came back, in what order*,
+ * which is where a mis-compiled clause actually shows up.
+ */
+function fingerprint(array $rows): string
+{
+    return implode('|', array_map(
+        static fn (array $row): string => implode(',', array_map(
+            static fn (mixed $v): string => $v === null ? 'NULL' : (is_numeric($v) ? (string) (float) $v : (string) $v),
+            array_intersect_key($row, array_flip(['id', 'title', 'score', 'views'])),
+        )),
+        $rows,
+    ));
+}
+
+// --- run -------------------------------------------------------------------
+
+$disagreements = [];
+$errors = [];
+
+for ($i = 0; $i < $count; $i++) {
+    $steps = shape();
+    $aggregate = [null, 'count', 'sum', 'min', 'max'][mt_rand(0, 4)];
+
+    $answers = [];
+
+    foreach ($connections as $driver => $db) {
+        try {
+            $query = build($db, $steps);
+
+            $answers[$driver] = $aggregate === null
+                ? fingerprint($query->get())
+                : ($aggregate === 'count'
+                    ? (string) $query->count()
+                    : (string) (float) $query->{$aggregate}('diff_posts.views'));
+        } catch (Throwable $e) {
+            $answers[$driver] = 'ERROR: ' . explode("\n", $e->getMessage())[0];
+            $errors[$driver] = ($errors[$driver] ?? 0) + 1;
+        }
+    }
+
+    if (count(array_unique($answers)) > 1) {
+        $key = describe($steps) . '|' . ($aggregate ?? 'get');
+
+        $disagreements[$key] ??= [
+            'query' => describe($steps),
+            'aggregate' => $aggregate ?? 'get',
+            'answers' => $answers,
+            'sql' => build(reset($connections), $steps)->toSql(),
+        ];
+    }
+}
+
+if (! $quiet) {
+    printf(
+        "seed %d, %d queries against %s\n",
+        $seed,
+        $count,
+        implode(', ', array_keys($connections)),
+    );
+}
+
+foreach ($errors as $driver => $n) {
+    printf("\033[33m  %s raised on %d queries\033[0m\n", $driver, $n);
+}
+
+if ($disagreements === []) {
+    printf("\033[32mEvery driver returned the same answer.\033[0m\n");
+
+    exit($errors === [] ? 0 : 1);
+}
+
+printf("\n\033[31m%d distinct disagreement(s):\033[0m\n\n", count($disagreements));
+
+foreach ($disagreements as $d) {
+    printf("  %s  [%s]\n", $d['query'], $d['aggregate']);
+    printf("    %s\n", $d['sql']);
+
+    foreach ($d['answers'] as $driver => $answer) {
+        printf("    %-8s %s\n", $driver, substr($answer, 0, 120));
+    }
+
+    echo "\n";
+}
+
+printf("Reproduce with: bin/differential --seed=%d\n", $seed);
+
+exit(1);
