@@ -42,7 +42,7 @@ final class PhpEngine implements Engine, SupportsFunctions
     {
         $file = $this->resolve($template);
 
-        if (! is_file($file)) {
+        if ($file === null || ! is_file($file)) {
             throw new ViewNotFound("Template [$template] was not found in {$this->path}.");
         }
 
@@ -68,7 +68,9 @@ final class PhpEngine implements Engine, SupportsFunctions
 
     public function exists(string $template): bool
     {
-        return is_file($this->resolve($template));
+        $file = $this->resolve($template);
+
+        return $file !== null && is_file($file);
     }
 
     public function share(string $key, mixed $value): void
@@ -133,10 +135,8 @@ final class PhpEngine implements Engine, SupportsFunctions
         return (string) ob_get_clean();
     }
 
-    private function resolve(string $template): string
+    private function resolve(string $template): ?string
     {
-        $template = str_ends_with($template, '.php') ? $template : "$template.php";
-
-        return rtrim($this->path, '/') . '/' . ltrim($template, '/');
+        return TemplatePath::resolve($this->path, $template, '.php');
     }
 }

@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace Phpvin\Tests;
 
+use InvalidArgumentException;
 use PHPUnit\Framework\Attributes\Test;
 use PHPUnit\Framework\TestCase;
 use Phpvin\Application;
 use Phpvin\Container\Container;
+use Phpvin\Http\RedirectResponse;
 use Phpvin\Http\Request;
 use Phpvin\Http\Response;
 use Phpvin\Http\Session;
@@ -133,6 +135,97 @@ final class SecurityTest extends TestCase
 
         $this->assertSame(404, $missing->status());
         $this->assertSame('nosniff', $missing->getHeader('X-Content-Type-Options'));
+    }
+
+    // --- header injection -------------------------------------------------
+
+    #[Test]
+    public function a_line_break_in_a_header_value_is_refused(): void
+    {
+        // `redirect($request->input('next'))` is ordinary code. If the value
+        // can carry CRLF it stops being one header and becomes two, and the
+        // second one is whatever the attacker wanted -- classically a
+        // Set-Cookie that fixes the session.
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('line break');
+
+        (new Response())->header('Location', "http://example.com/\r\nSet-Cookie: admin=1");
+    }
+
+    #[Test]
+    public function a_bare_newline_is_refused_too(): void
+    {
+        // Some parsers accept LF alone, so rejecting only CRLF is not enough.
+        $this->expectException(InvalidArgumentException::class);
+
+        (new Response())->header('X-Thing', "value\nX-Injected: 1");
+    }
+
+    #[Test]
+    public function a_null_byte_in_a_header_value_is_refused(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+
+        (new Response())->header('X-Thing', "value\0truncated");
+    }
+
+    #[Test]
+    public function a_malformed_header_name_is_refused(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('not a valid header name');
+
+        (new Response())->header('X Thing: injected', 'value');
+    }
+
+    #[Test]
+    public function an_empty_header_name_is_refused(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+
+        (new Response())->header('', 'value');
+    }
+
+    #[Test]
+    public function the_constructor_validates_headers_as_well(): void
+    {
+        // The array form funnels through header(), so it cannot be a way in.
+        $this->expectException(InvalidArgumentException::class);
+
+        new Response('', 200, ['Location' => "/ok\r\nSet-Cookie: a=1"]);
+    }
+
+    #[Test]
+    public function a_redirect_cannot_smuggle_a_second_header(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+
+        new RedirectResponse("/dashboard\r\nSet-Cookie: role=admin");
+    }
+
+    #[Test]
+    public function ordinary_headers_are_untouched(): void
+    {
+        // The guard has to be invisible to every legitimate value, including
+        // punctuation-heavy ones like CSP and Content-Disposition.
+        $response = (new Response())
+            ->header('Content-Security-Policy', "default-src 'self'; img-src * data:")
+            ->header('Content-Disposition', 'attachment; filename="q1 report.pdf"')
+            ->header('X-Custom_Header', 'a|b~c')
+            ->header('Cache-Control', 'no-store, max-age=0');
+
+        $this->assertSame("default-src 'self'; img-src * data:", $response->getHeader('Content-Security-Policy'));
+        $this->assertSame('attachment; filename="q1 report.pdf"', $response->getHeader('Content-Disposition'));
+        $this->assertSame('a|b~c', $response->getHeader('X-Custom_Header'));
+        $this->assertSame('no-store, max-age=0', $response->getHeader('Cache-Control'));
+    }
+
+    #[Test]
+    public function a_tab_is_allowed_because_folded_values_are_legal(): void
+    {
+        $response = (new Response())->header('X-Thing', "a\tb");
+
+        $this->assertSame("a\tb", $response->getHeader('X-Thing'));
     }
 
     // --- rate limiter -----------------------------------------------------
