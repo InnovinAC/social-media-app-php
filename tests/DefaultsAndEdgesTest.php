@@ -71,6 +71,34 @@ final class DefaultsAndEdgesTest extends TestCase
     }
 
     #[Test]
+    public function the_cache_is_in_memory_until_a_path_is_configured(): void
+    {
+        // A file cache nobody configured is a directory nobody knew was
+        // filling up, so the default lasts one request and leaves no trace.
+        $app = $this->app(['views' => ['engine' => 'none'], 'providers' => []]);
+
+        $this->assertInstanceOf(
+            \Phpvin\Cache\ArrayStore::class,
+            $app->container()->get(\Psr\SimpleCache\CacheInterface::class),
+        );
+    }
+
+    #[Test]
+    public function a_configured_cache_path_produces_a_file_store(): void
+    {
+        $app = $this->app([
+            'views' => ['engine' => 'none'],
+            'providers' => [],
+            'cache' => ['path' => sys_get_temp_dir() . '/phpvin-cache-default-' . getmypid()],
+        ]);
+
+        $this->assertInstanceOf(
+            \Phpvin\Cache\FileStore::class,
+            $app->container()->get(\Psr\SimpleCache\CacheInterface::class),
+        );
+    }
+
+    #[Test]
     public function there_is_no_default_encryption_key(): void
     {
         // A key that ships with the framework is a key everybody shares.

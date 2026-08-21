@@ -24,7 +24,9 @@
         "php": "^8.2",
         "ext-pdo": "*",
         "psr/container": "^2.0",
-        "psr/log": "^3.0"
+        "psr/event-dispatcher": "^1.0",
+        "psr/log": "^3.0",
+        "psr/simple-cache": "^3.0"
     },
     "require-dev": {
         "friendsofphp/php-cs-fixer": "^3.64",

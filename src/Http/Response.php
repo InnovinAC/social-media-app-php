@@ -176,7 +176,7 @@ class Response
         echo $this->body;
     }
 
-    private function normaliseHeaderName(string $name): string
+    protected function normaliseHeaderName(string $name): string
     {
         return implode('-', array_map(ucfirst(...), explode('-', $name)));
     }
