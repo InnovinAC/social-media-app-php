@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Phpvin\Tests;
 
 use LogicException;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\Attributes\Test;
 use Phpvin\Database\Model;
 use Phpvin\Database\Relations\BelongsTo;
@@ -280,6 +281,169 @@ final class RelationsTest extends DatabaseTestCase
     private function countQueries(): int
     {
         return $this->db->queryCount();
+    }
+
+    // --- eager loading must agree with lazy loading -----------------------
+
+    /**
+     * Datasets chosen for the shapes that break key matching, not for realism.
+     *
+     * @return array<string, array{0: list<array{0: int|null, 1: int}>}>
+     */
+    public static function shapes(): array
+    {
+        // [writer index or null for a dangling id, how many articles]
+        return [
+            'nobody has anything' => [[]],
+            'one writer, no children' => [[]],
+            'a writer with one child' => [[[0, 1]]],
+            'a writer with many children' => [[[0, 5]]],
+            'children spread over writers' => [[[0, 2], [1, 3], [2, 1]]],
+            'a writer in the middle has none' => [[[0, 2], [2, 2]]],
+            'orphans with a null key' => [[[0, 2], [null, 3]]],
+            'only orphans' => [[[null, 4]]],
+            'a dangling foreign key' => [[[0, 1], [99, 2]]],
+            'every writer has children' => [[[0, 1], [1, 1], [2, 1]]],
+        ];
+    }
+
+    /**
+     * @param list<array{0: int|null, 1: int}> $plan
+     */
+    #[Test]
+    #[DataProvider('shapes')]
+    public function eager_loading_returns_exactly_what_lazy_loading_returns(array $plan): void
+    {
+        // The strongest oracle available here: `with()` is an optimisation, so
+        // it has to be invisible. Anything it returns that resolving the
+        // relation one parent at a time would not is a bug, whichever of the
+        // two happens to be right. Hand-written relation tests check the happy
+        // shape; the shapes that break key matching are orphans, gaps, and
+        // parents with nothing, and those are enumerated here instead.
+        $writers = [];
+
+        foreach (['ada', 'grace', 'alan'] as $name) {
+            $writers[] = Writer::create(['name' => $name]);
+        }
+
+        foreach ($plan as [$which, $count]) {
+            for ($i = 0; $i < $count; $i++) {
+                $article = new Article(['title' => "t$i", 'published' => true, 'tags' => []]);
+
+                $article->writer_id = match (true) {
+                    $which === null => null,
+                    $which === 99 => 4242,          // points at a writer that is not there
+                    default => $writers[$which]->key(),
+                };
+
+                $article->save();
+            }
+        }
+
+        // Eager: one query for the parents, one for the relation.
+        $eager = Writer::query()->orderBy('id')->with('articles')->get();
+
+        // Lazy: resolved one parent at a time, from fresh models.
+        $lazy = Writer::query()->orderBy('id')->get();
+
+        $this->assertCount(count($lazy), $eager);
+
+        foreach ($eager as $index => $writer) {
+            $this->assertSame(
+                $this->keysOf($lazy[$index]->articles),
+                $this->keysOf($writer->articles),
+                "articles disagreed for writer {$writer->key()}",
+            );
+        }
+    }
+
+    /**
+     * @param list<array{0: int|null, 1: int}> $plan
+     */
+    #[Test]
+    #[DataProvider('shapes')]
+    public function eager_loading_belongs_to_agrees_with_lazy(array $plan): void
+    {
+        $writers = [];
+
+        foreach (['ada', 'grace', 'alan'] as $name) {
+            $writers[] = Writer::create(['name' => $name]);
+        }
+
+        foreach ($plan as [$which, $count]) {
+            for ($i = 0; $i < $count; $i++) {
+                $article = new Article(['title' => "t$i", 'published' => true, 'tags' => []]);
+
+                $article->writer_id = match (true) {
+                    $which === null => null,
+                    $which === 99 => 4242,
+                    default => $writers[$which]->key(),
+                };
+
+                $article->save();
+            }
+        }
+
+        $eager = Article::query()->orderBy('id')->with('writer')->get();
+        $lazy = Article::query()->orderBy('id')->get();
+
+        // Stated even when there are no articles: "both sides returned
+        // nothing" is a real agreement, not an absent one.
+        $this->assertCount(count($lazy), $eager);
+
+        foreach ($eager as $index => $article) {
+            $expected = $lazy[$index]->writer;
+
+            $this->assertSame(
+                $expected === null ? null : $expected->key(),
+                $article->writer === null ? null : $article->writer->key(),
+                "writer disagreed for article {$article->key()}",
+            );
+        }
+    }
+
+    #[Test]
+    public function eager_loading_a_has_one_picks_the_same_row_as_lazy_loading(): void
+    {
+        // A hasOne with two matching rows is a data problem, not a supported
+        // shape -- but it happens, and when it does the two loading paths must
+        // not disagree about which row wins. Eager takes the first of a
+        // whereIn result; lazy takes the first of a `= ?` result. Those are
+        // different queries, and without an order nothing makes them agree.
+        $writer = Writer::create(['name' => 'ada']);
+
+        foreach (['first bio', 'second bio'] as $bio) {
+            $profile = new Profile(['bio' => $bio]);
+            $profile->writer_id = $writer->key();
+            $profile->save();
+        }
+
+        $profiles = Profile::query()->orderBy('id')->get();
+        $first = $profiles[0]->key();
+
+        $eager = Writer::query()->with('profile')->get()[0];
+        $lazy = Writer::findOrFail($writer->key());
+
+        $this->assertSame(
+            $lazy->profile?->key(),
+            $eager->profile?->key(),
+            'eager and lazy chose different rows for a hasOne',
+        );
+
+        // Asserting *which* row, not just that the two agree. Agreement alone
+        // passes while both sides are accidentally returning insertion order,
+        // and goes on passing right up until an engine reorders them.
+        $this->assertSame($first, $eager->profile?->key());
+        $this->assertSame($first, $lazy->profile?->key());
+    }
+
+    /**
+     * @param  list<Model> $models
+     * @return list<int|string>
+     */
+    private function keysOf(array $models): array
+    {
+        return array_map(static fn (Model $m): int|string => $m->key(), $models);
     }
 }
 

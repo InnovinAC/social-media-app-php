@@ -61,6 +61,14 @@ abstract class Relation
     }
 
     /**
+     * The primary key column of the related model.
+     */
+    protected function relatedKey(): string
+    {
+        return ($this->related)::primaryKey();
+    }
+
+    /**
      * The distinct, non-null values of $key across $parents.
      *
      * @param  list<Model> $parents

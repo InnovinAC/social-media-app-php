@@ -78,6 +78,28 @@ kept in full: the point of a first changelog is not to look uneventful.
 
 ### Fixed
 
+- **The rate limiter lost attempts to a race.** `hit()` read the count, added
+  one and wrote it back, with no lock held across the three steps. Requests
+  arriving together each read the same number and each stored the same
+  increment, so the rest simply vanished: a test firing 60 concurrent attempts
+  recorded 6. A limit of five attempts a minute therefore admitted roughly
+  fifty to anyone willing to open connections in parallel, which is precisely
+  what someone guessing passwords does. The whole read-modify-write is now held
+  under one exclusive lock, opened with `c+` so taking the lock cannot truncate
+  the count it is protecting. `tests/ConcurrencyTest.php` spawns real
+  processes, because a single-process suite runs operations to completion one
+  at a time and that is the one condition under which this bug cannot happen.
+- **A `hasOne` with two matching rows could load differently eagerly and
+  lazily.** Two rows matching a `hasOne` is a data problem rather than a shape
+  the relation supports, but it happens, and the two loading paths then asked
+  different questions: eager took the first row of a `WHERE key IN (...)`
+  covering every parent, lazy the first of a `WHERE key = ?` for one. Neither
+  was ordered, so nothing obliged an engine to answer them consistently. It
+  happened to, on this data, until a rebuilt index or a different plan changed
+  its mind. Both sides now take the lowest primary key, which makes "which one"
+  a decision rather than an accident.
+
+
 - **Aggregates over a grouped query rejected a qualified column.** A grouped
   select is wrapped in a subquery aliased `grouped`, and the aggregate kept the
   original table on the column, naming a table that is no longer in scope, so

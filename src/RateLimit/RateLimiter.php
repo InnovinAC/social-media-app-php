@@ -34,18 +34,48 @@ class RateLimiter
      */
     public function hit(string $key, int $decaySeconds = 60): int
     {
-        $record = $this->read($key);
-        $now = time();
+        // Read, add one, write -- and if two requests interleave between the
+        // read and the write, both see the same count and both store the same
+        // increment, so one of the attempts never happened. That turns "five
+        // tries a minute" into "as many as you can open connections", which is
+        // the one thing a rate limiter exists to prevent, and it shows up only
+        // under exactly the concurrency an attacker supplies on purpose.
+        //
+        // The whole read-modify-write is held under one exclusive lock. `c+`
+        // creates the file if it is missing and does *not* truncate it, so
+        // taking the lock cannot itself destroy the count it is protecting.
+        $path = $this->pathFor($key);
 
-        if ($record === null || $record['expires'] <= $now) {
-            $record = ['count' => 0, 'expires' => $now + $decaySeconds];
+        $this->ensureDirectory(dirname($path));
+
+        $handle = @fopen($path, 'c+');
+
+        if ($handle === false) { // mutation:ignore the directory was just created or the open would have thrown
+            throw new RuntimeException("Could not open the rate limit record at [$path].");
         }
 
-        $record['count']++;
+        try {
+            flock($handle, LOCK_EX);
 
-        $this->write($key, $record);
+            $record = $this->decode((string) stream_get_contents($handle));
+            $now = time();
 
-        return $record['count'];
+            if ($record === null || $record['expires'] <= $now) {
+                $record = ['count' => 0, 'expires' => $now + $decaySeconds];
+            }
+
+            $record['count']++;
+
+            ftruncate($handle, 0);
+            rewind($handle);
+            fwrite($handle, (string) json_encode($record));
+            fflush($handle);
+
+            return $record['count'];
+        } finally {
+            flock($handle, LOCK_UN);
+            fclose($handle);
+        }
     }
 
     public function attempts(string $key): int
@@ -82,10 +112,14 @@ class RateLimiter
     {
         $contents = @file_get_contents($this->pathFor($key));
 
-        if ($contents === false) {
-            return null;
-        }
+        return $contents === false ? null : $this->decode($contents);
+    }
 
+    /**
+     * @return array{count: int, expires: int}|null
+     */
+    private function decode(string $contents): ?array
+    {
         $decoded = json_decode($contents, true);
 
         if (! is_array($decoded) || ! isset($decoded['count'], $decoded['expires'])) {
@@ -95,20 +129,12 @@ class RateLimiter
         return ['count' => (int) $decoded['count'], 'expires' => (int) $decoded['expires']];
     }
 
-    /**
-     * @param array{count: int, expires: int} $record
-     */
-    private function write(string $key, array $record): void
+    private function ensureDirectory(string $directory): void
     {
-        $path = $this->pathFor($key);
-        $directory = dirname($path);
-
         // Trailing is_dir() covers a concurrent create; unreachable by test.
         if (! is_dir($directory) && ! mkdir($directory, 0o700, true) && ! is_dir($directory)) { // mutation:ignore race guard
             throw new RuntimeException("Could not create the rate limit directory [$directory].");
         }
-
-        @file_put_contents($path, json_encode($record), LOCK_EX);
     }
 
     /**
