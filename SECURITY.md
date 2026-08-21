@@ -33,35 +33,31 @@ Worth knowing what you are and are not getting.
 - `VerifyCsrfToken` rejects state-changing requests without a valid token, and
   compares in constant time.
 - Sessions are regenerated on login, closing off session fixation.
+- Session cookies are `HttpOnly` and `SameSite=Lax`, set before the cookie is
+  issued rather than left to whatever php.ini happens to say.
 - Uploads are typed by sniffing their contents, never by the client's filename
   or `Content-Type`, and are stored under a generated name.
 - 5xx messages and stack traces are withheld from the response unless `debug`
   is on.
 
-**Opt in, and you should**
+**Available, and worth using**
 
-- `SecurityHeaders` middleware, nosniff, frame options, referrer policy. Add a
+- **`Encrypter`**: authenticated encryption. XChaCha20-Poly1305 through
+  libsodium where it exists, AES-256-GCM through OpenSSL otherwise. Every
+  payload is encrypted *and* authenticated, so a modified ciphertext fails to
+  open rather than decrypting to something an attacker chose. Every failure
+  gives the same message, because distinguishable ones are what make a padding
+  oracle work.
+- **`EncryptCookies`**: a cookie is a value the client can rewrite, so anything
+  you set and later trust is an input field with extra steps until it is sealed.
+  One that fails to decrypt is dropped rather than passed through, so a forged
+  value never reaches application code looking genuine.
+- **`SecurityHeaders`**: nosniff, frame options, referrer policy. Add a
   Content-Security-Policy yourself; only you know what your pages load.
-- `ThrottleRequests` middleware on login and any other guessable endpoint.
-- HSTS, once you are actually serving over HTTPS.
-
-- **Authenticated encryption** via `Encrypter`, XChaCha20-Poly1305 where
-  libsodium is available, AES-256-GCM otherwise. Every payload is encrypted and
-  authenticated, so a modified ciphertext fails to open rather than decrypting
-  to something an attacker chose. Every failure gives the same message, because
-  distinguishable ones are what make a padding oracle work.
-- **Session cookies** are `HttpOnly` and `SameSite=Lax` out of the box, set
-  before the cookie is issued rather than left to php.ini.
-
-**Opt in, and you should**
-
-- `EncryptCookies` middleware. A cookie is a value the client can rewrite;
-  anything you set and later trust has to be sealed. A cookie that fails to
-  decrypt is dropped rather than passed through, so a forged value never
-  reaches application code looking genuine.
-- `session_cookie.secure` once you are on HTTPS. It is off by default because
-  a secure cookie is never sent over plain HTTP, and defaulting it on would
-  silently break every local setup.
+- **`ThrottleRequests`**: on login and any other guessable endpoint.
+- **`session_cookie.secure` and HSTS**, once you are actually on HTTPS. Both are
+  off by default: a secure cookie is never sent over plain HTTP, so defaulting
+  them on would silently break every local setup.
 
 **Not provided**
 
