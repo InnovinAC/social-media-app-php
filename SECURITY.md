@@ -43,6 +43,7 @@ table is meant to be checked against the code rather than believed.
 | Upload type confusion | closed | Type comes from sniffing the bytes, never the client's filename or `Content-Type`. |
 | Host header poisoning | closed by design | Absolute URLs come from a configured `baseUrl`. The framework never reads `Host` to build a link, so a poisoned one has nothing to poison. |
 | Timing attacks on tokens | closed | `hash_equals` for CSRF and any sealed value. |
+| Rate limit evasion by concurrency | closed | The counter's read-add-write is held under one exclusive lock, so parallel requests cannot each record the same increment. Before this, 60 concurrent attempts registered as 6. |
 | Brute force | tool provided | `ThrottleRequests` plus the rate limiter. Yours to apply to the endpoints that need it. |
 | XSS | tool provided | Twig escapes by default; the `php` engine gives you `$e()`. Escaping is the template's job and always will be. |
 | Clickjacking, MIME sniffing | tool provided | `SecurityHeaders`. CSP is yours, because only you know what your pages load. |
@@ -129,6 +130,13 @@ nothing on it tells you less than one that shows its work:
   executed. Closed in `e91f952`, along with the same flaw in `HtmlEngine`.
 - **Response header injection.** `Response::header()` accepted CRLF in values.
   Closed in `e91f952`.
+- **Rate limit evasion by concurrency.** `RateLimiter::hit()` read a count,
+  added one and wrote it back without holding a lock across the three, so
+  requests arriving together each recorded the same increment and the rest were
+  lost. Measured at 60 concurrent attempts counted as 6, so a limit of five
+  would have admitted roughly fifty. Parallel requests are what an attacker
+  sends on purpose, so this was a weakness in the control most relied on to
+  stop guessing.
 - **Unauthenticated cache payloads.** `FileStore` handed stored bytes straight
   to `unserialize()`, so any file-write primitive elsewhere could be escalated
   to code execution through a gadget chain. Entries are now authenticated with
