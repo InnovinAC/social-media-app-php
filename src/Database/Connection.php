@@ -8,6 +8,7 @@ use Closure;
 use PDO;
 use PDOException;
 use PDOStatement;
+use Phpvin\Database\Grammar\Grammar;
 use Throwable;
 
 /**
@@ -22,6 +23,8 @@ final class Connection
 
     /** @var list<array{sql: string, bindings: array<array-key, mixed>}>|null */
     private ?array $queryLog = null;
+
+    private ?Grammar $grammar = null;
 
     /**
      * @param PDO|Closure(): PDO $pdo A closure defers connecting until the
@@ -96,6 +99,17 @@ final class Connection
     public function driver(): string
     {
         return (string) $this->pdo()->getAttribute(PDO::ATTR_DRIVER_NAME);
+    }
+
+    /**
+     * The SQL dialect for this connection.
+     *
+     * Postgres rejects the backticks MySQL requires, so nothing may assume a
+     * quoting style without asking.
+     */
+    public function grammar(): Grammar
+    {
+        return $this->grammar ??= Grammar::for($this->driver());
     }
 
     /**
@@ -198,9 +212,26 @@ final class Connection
         }
     }
 
+    public function inTransaction(): bool
+    {
+        return $this->pdo()->inTransaction();
+    }
+
+    /**
+     * How many nested transactions are currently open.
+     */
+    public function transactionDepth(): int
+    {
+        return $this->transactionDepth;
+    }
+
     public function beginTransaction(): void
     {
-        if ($this->transactionDepth === 0) {
+        // The driver is the authority, not our counter. MySQL commits an open
+        // transaction the moment it sees DDL, so by the time we get here the
+        // transaction we think we are inside may already be gone.
+        if ($this->transactionDepth === 0 || ! $this->pdo()->inTransaction()) {
+            $this->transactionDepth = 0;
             $this->pdo()->beginTransaction();
         } else {
             $this->pdo()->exec('SAVEPOINT phpvin_sp' . $this->transactionDepth);
@@ -211,7 +242,19 @@ final class Connection
 
     public function commit(): void
     {
+        if ($this->transactionDepth === 0) {
+            return;
+        }
+
         $this->transactionDepth--;
+
+        // Committed underneath us already, so resync rather than emitting
+        // `RELEASE SAVEPOINT phpvin_sp-1`, which is what used to happen.
+        if (! $this->pdo()->inTransaction()) {
+            $this->transactionDepth = 0;
+
+            return;
+        }
 
         if ($this->transactionDepth === 0) {
             $this->pdo()->commit();
@@ -222,13 +265,44 @@ final class Connection
 
     public function rollBack(): void
     {
+        if ($this->transactionDepth === 0) {
+            return;
+        }
+
         $this->transactionDepth--;
+
+        if (! $this->pdo()->inTransaction()) {
+            $this->transactionDepth = 0;
+
+            return;
+        }
 
         if ($this->transactionDepth === 0) {
             $this->pdo()->rollBack();
         } else {
             $this->pdo()->exec('ROLLBACK TO SAVEPOINT phpvin_sp' . $this->transactionDepth);
         }
+    }
+
+    /**
+     * PDO binds a PHP bool as '1' or, fatally, '', and an empty string is not
+     * a valid boolean, smallint or anything else. Postgres rejects it outright
+     * and MySQL quietly stores zero. Booleans become 0/1 before they reach the
+     * driver, which every supported database accepts for both integer and
+     * boolean columns.
+     *
+     * @param  list<mixed>|array<string, mixed> $bindings
+     * @return list<mixed>|array<string, mixed>
+     */
+    private function normaliseBindings(array $bindings): array
+    {
+        foreach ($bindings as $key => $value) {
+            if (is_bool($value)) {
+                $bindings[$key] = $value ? 1 : 0;
+            }
+        }
+
+        return $bindings;
     }
 
     /**
@@ -247,7 +321,7 @@ final class Connection
 
             // Named bindings must keep their keys; positional ones are already
             // a list by the time they reach here.
-            $statement->execute($bindings);
+            $statement->execute($this->normaliseBindings($bindings));
 
             return $statement;
         } catch (PDOException $e) {

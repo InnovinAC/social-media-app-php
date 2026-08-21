@@ -8,6 +8,7 @@ use RuntimeException;
 use Twig\Environment;
 use Twig\Extension\DebugExtension;
 use Twig\Loader\FilesystemLoader;
+use Twig\TwigFilter;
 use Twig\TwigFunction;
 
 /**
@@ -62,6 +63,11 @@ final class TwigEngine implements Engine, SupportsFunctions
     public function addFunction(string $name, callable $callable): void
     {
         $this->twig->addFunction(new TwigFunction($name, $callable(...)));
+    }
+
+    public function addFilter(string $name, callable $callable): void
+    {
+        $this->twig->addFilter(new TwigFilter($name, $callable(...)));
     }
 
     public function twig(): Environment

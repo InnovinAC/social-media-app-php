@@ -6,40 +6,27 @@ namespace Phpvin\Tests;
 
 use LogicException;
 use PHPUnit\Framework\Attributes\Test;
-use PHPUnit\Framework\TestCase;
-use Phpvin\Database\Connection;
 use Phpvin\Database\Model;
 use Phpvin\Database\Relations\BelongsTo;
 use Phpvin\Database\Relations\HasMany;
 use Phpvin\Database\Relations\HasOne;
 
-final class RelationsTest extends TestCase
+final class RelationsTest extends DatabaseTestCase
 {
-    private Connection $connection;
-
     protected function setUp(): void
     {
-        $this->connection = Connection::sqliteInMemory();
+        parent::setUp();
 
-        $this->connection->statement(
-            'CREATE TABLE writers (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT,
-                created_at TEXT, updated_at TEXT)',
-        );
-        $this->connection->statement(
-            'CREATE TABLE articles (id INTEGER PRIMARY KEY AUTOINCREMENT, writer_id INT, title TEXT,
-                published TEXT, tags TEXT, score TEXT, created_at TEXT, updated_at TEXT)',
-        );
-        $this->connection->statement(
-            'CREATE TABLE profiles (id INTEGER PRIMARY KEY AUTOINCREMENT, writer_id INT, bio TEXT,
-                created_at TEXT, updated_at TEXT)',
-        );
-
-        Model::useConnection($this->connection);
-    }
-
-    protected function tearDown(): void
-    {
-        Model::useConnection(null);
+        $this->createTable('writers', ['id' => 'id', 'name' => 'string'] + self::TIMESTAMPS);
+        $this->createTable('articles', [
+            'id' => 'id',
+            'writer_id' => 'int',
+            'title' => 'string',
+            'published' => 'bool',
+            'tags' => 'text',
+            'score' => 'float',
+        ] + self::TIMESTAMPS);
+        $this->createTable('profiles', ['id' => 'id', 'writer_id' => 'int', 'bio' => 'text'] + self::TIMESTAMPS);
     }
 
     private function seed(): Writer
@@ -68,7 +55,10 @@ final class RelationsTest extends TestCase
 
         $article = Article::findOrFail(1);
 
-        $this->assertSame('1', $article->getAttribute('published'), 'raw column is a string');
+        // What the driver hands back for a boolean column is its own business:
+        // '1' on MySQL, 1 on SQLite, true or 't' on Postgres. The invariant is
+        // that the cast turns all of them into a real bool.
+        $this->assertNotSame(true, $article->getAttribute('published'), 'the raw value is whatever the driver stored');
         $this->assertTrue($article->published, 'cast read gives a real bool');
     }
 
@@ -127,7 +117,7 @@ final class RelationsTest extends TestCase
         $article->published = false;
         $article->save();
 
-        $row = $this->connection->selectOne('SELECT published, tags FROM articles WHERE id = 1');
+        $row = $this->db->selectOne('SELECT published, tags FROM articles WHERE id = 1');
 
         $this->assertSame('0', (string) $row['published']);
         $this->assertSame('["php","testing"]', $row['tags']);
@@ -289,7 +279,7 @@ final class RelationsTest extends TestCase
      */
     private function countQueries(): int
     {
-        return $this->connection->queryCount();
+        return $this->db->queryCount();
     }
 }
 

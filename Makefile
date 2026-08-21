@@ -68,3 +68,31 @@ docker-down:
 
 docker-shell:
 	docker compose exec web sh
+
+# --- cross-driver testing ---------------------------------------------------
+# The suite is driver-agnostic; these bring up the databases it can run against.
+MYSQL_PORT := 33061
+PGSQL_PORT := 54321
+
+.PHONY: db-up db-down test-drivers
+
+db-up:
+	@docker rm -f phpvin-mysql phpvin-pgsql >/dev/null 2>&1 || true
+	docker run -d --name phpvin-mysql -e MYSQL_ROOT_PASSWORD=secret \
+		-e MYSQL_DATABASE=phpvin_test -p $(MYSQL_PORT):3306 mysql:8.0 >/dev/null
+	docker run -d --name phpvin-pgsql -e POSTGRES_PASSWORD=secret \
+		-e POSTGRES_DB=phpvin_test -p $(PGSQL_PORT):5432 postgres:16 >/dev/null
+	@printf 'waiting for databases'
+	@until docker exec phpvin-mysql mysqladmin ping -psecret >/dev/null 2>&1 \
+		&& docker exec phpvin-pgsql pg_isready -U postgres >/dev/null 2>&1; \
+		do printf '.'; sleep 1; done; echo ' ready'
+
+db-down:
+	@docker rm -f phpvin-mysql phpvin-pgsql >/dev/null 2>&1 || true
+	@echo "databases removed"
+
+test-drivers:
+	@for d in sqlite mysql pgsql; do \
+		printf '\n== %s ==\n' "$$d"; \
+		DB_DRIVER=$$d ./vendor/bin/phpunit || exit 1; \
+	done

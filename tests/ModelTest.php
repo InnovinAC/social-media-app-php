@@ -6,36 +6,22 @@ namespace Phpvin\Tests;
 
 use LogicException;
 use PHPUnit\Framework\Attributes\Test;
-use PHPUnit\Framework\TestCase;
-use Phpvin\Database\Connection;
 use Phpvin\Database\Model;
 use Phpvin\Database\RecordNotFound;
 use RuntimeException;
 
-final class ModelTest extends TestCase
+final class ModelTest extends DatabaseTestCase
 {
-    private Connection $connection;
-
     protected function setUp(): void
     {
-        $this->connection = Connection::sqliteInMemory();
-        $this->connection->statement(
-            'CREATE TABLE posts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                title TEXT,
-                body TEXT,
-                secret TEXT,
-                created_at TEXT,
-                updated_at TEXT
-            )',
-        );
+        parent::setUp();
 
-        Model::useConnection($this->connection);
-    }
-
-    protected function tearDown(): void
-    {
-        Model::useConnection(null);
+        $this->createTable('posts', [
+            'id' => 'id',
+            'title' => 'string',
+            'body' => 'text',
+            'secret' => 'string',
+        ] + self::TIMESTAMPS);
     }
 
     #[Test]
@@ -224,7 +210,7 @@ final class ModelTest extends TestCase
     public function a_transaction_rolls_back_on_failure(): void
     {
         try {
-            $this->connection->transaction(function (): void {
+            $this->db->transaction(function (): void {
                 Post::create(['title' => 'Should not survive']);
 
                 throw new RuntimeException('abort');
@@ -239,7 +225,7 @@ final class ModelTest extends TestCase
     #[Test]
     public function a_transaction_commits_on_success(): void
     {
-        $this->connection->transaction(function (): void {
+        $this->db->transaction(function (): void {
             Post::create(['title' => 'Survives']);
         });
 

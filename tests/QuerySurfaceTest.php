@@ -6,30 +6,37 @@ namespace Phpvin\Tests;
 
 use InvalidArgumentException;
 use PHPUnit\Framework\Attributes\Test;
-use PHPUnit\Framework\TestCase;
-use Phpvin\Database\Connection;
 use Phpvin\Database\QueryBuilder;
 
 /**
  * Grouping, joins, aggregates and pagination: the surface added after the
  * first release, plus the precedence trap that prompted it.
  */
-final class QuerySurfaceTest extends TestCase
+final class QuerySurfaceTest extends DatabaseTestCase
 {
-    private Connection $db;
-
     protected function setUp(): void
     {
-        $this->db = Connection::sqliteInMemory();
-        $this->db->statement('CREATE TABLE authors (id INTEGER PRIMARY KEY, name TEXT)');
-        $this->db->statement('CREATE TABLE posts (id INTEGER PRIMARY KEY, author_id INT, status TEXT, views INT)');
+        parent::setUp();
 
-        $this->db->statement("INSERT INTO authors (id, name) VALUES (1, 'ada'), (2, 'grace')");
-        $this->db->statement(
-            "INSERT INTO posts (author_id, status, views) VALUES
-                (1, 'draft', 10), (1, 'published', 5), (1, 'archived', 1),
-                (2, 'published', 7), (2, 'draft', 3)",
-        );
+        $this->createTable('authors', ['id' => 'id', 'name' => 'string']);
+        $this->createTable('posts', [
+            'id' => 'id', 'author_id' => 'int', 'status' => 'string', 'views' => 'int',
+        ]);
+
+        foreach ([[1, 'ada'], [2, 'grace']] as [$id, $name]) {
+            $this->db->statement(
+                'INSERT INTO ' . $this->q('authors') . ' (' . $this->q('id') . ', ' . $this->q('name') . ') VALUES (?, ?)',
+                [$id, $name],
+            );
+        }
+
+        foreach ([[1, 'draft', 10], [1, 'published', 5], [1, 'archived', 1], [2, 'published', 7], [2, 'draft', 3]] as $row) {
+            $this->db->statement(
+                'INSERT INTO ' . $this->q('posts') . ' (' . $this->q('author_id') . ', '
+                . $this->q('status') . ', ' . $this->q('views') . ') VALUES (?, ?, ?)',
+                $row,
+            );
+        }
     }
 
     private function posts(): QueryBuilder
@@ -49,7 +56,7 @@ final class QuerySurfaceTest extends TestCase
             ->orWhere('status', '=', 'published');
 
         $this->assertSame(
-            'SELECT * FROM `posts` WHERE `author_id` = ? AND `status` = ? OR `status` = ?',
+            $this->sql('SELECT * FROM `posts` WHERE `author_id` = ? AND `status` = ? OR `status` = ?'),
             $query->toSql(),
         );
     }
@@ -64,7 +71,7 @@ final class QuerySurfaceTest extends TestCase
                 ->orWhere('status', '=', 'published'));
 
         $this->assertSame(
-            'SELECT * FROM `posts` WHERE `author_id` = ? AND (`status` = ? OR `status` = ?)',
+            $this->sql('SELECT * FROM `posts` WHERE `author_id` = ? AND (`status` = ? OR `status` = ?)'),
             $query->toSql(),
         );
         $this->assertSame([1, 'draft', 'published'], $query->bindings());
@@ -99,7 +106,7 @@ final class QuerySurfaceTest extends TestCase
                     ->where('views', '>', 6)));
 
         $this->assertSame(
-            'SELECT * FROM `posts` WHERE `views` > ? AND (`status` = ? OR (`status` = ? AND `views` > ?))',
+            $this->sql('SELECT * FROM `posts` WHERE `views` > ? AND (`status` = ? OR (`status` = ? AND `views` > ?))'),
             $query->toSql(),
         );
     }
@@ -109,7 +116,7 @@ final class QuerySurfaceTest extends TestCase
     {
         $query = $this->posts()->where('id', '=', 1)->whereGroup(fn () => null);
 
-        $this->assertSame('SELECT * FROM `posts` WHERE `id` = ?', $query->toSql());
+        $this->assertSame($this->sql('SELECT * FROM `posts` WHERE `id` = ?'), $query->toSql());
     }
 
     // --- more conditions --------------------------------------------------
@@ -198,7 +205,7 @@ final class QuerySurfaceTest extends TestCase
     {
         $query = $this->posts()->select(['author_id'])->groupBy('author_id')->having('author_id', '>', 1);
 
-        $this->assertStringContainsString('GROUP BY `author_id` HAVING `author_id` > ?', $query->toSql());
+        $this->assertStringContainsString($this->sql('GROUP BY `author_id` HAVING `author_id` > ?'), $query->toSql());
         $this->assertCount(1, $query->get());
     }
 
@@ -364,7 +371,7 @@ final class QuerySurfaceTest extends TestCase
         $log = $this->db->queryLog();
 
         $this->assertNotEmpty($log);
-        $this->assertStringContainsString('WHERE `status` = ?', end($log)['sql']);
+        $this->assertStringContainsString($this->sql('WHERE `status` = ?'), end($log)['sql']);
         $this->assertSame(['draft'], end($log)['bindings']);
     }
 }

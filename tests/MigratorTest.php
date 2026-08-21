@@ -5,21 +5,18 @@ declare(strict_types=1);
 namespace Phpvin\Tests;
 
 use PHPUnit\Framework\Attributes\Test;
-use PHPUnit\Framework\TestCase;
-use Phpvin\Database\Connection;
 use Phpvin\Database\Migrator;
 use RuntimeException;
 use Throwable;
 
-final class MigratorTest extends TestCase
+final class MigratorTest extends DatabaseTestCase
 {
-    private Connection $connection;
-
     private string $path;
 
     protected function setUp(): void
     {
-        $this->connection = Connection::sqliteInMemory();
+        parent::setUp();
+
         $this->path = sys_get_temp_dir() . '/phpvin-migrations-' . bin2hex(random_bytes(6));
         mkdir($this->path, 0o755, true);
     }
@@ -33,6 +30,12 @@ final class MigratorTest extends TestCase
         if (is_dir($this->path)) {
             rmdir($this->path);
         }
+
+        foreach (['posts', 'first', 'second', 'half_done', 'migrations'] as $table) {
+            $this->db->statement('DROP TABLE IF EXISTS ' . $this->q($table));
+        }
+
+        parent::tearDown();
     }
 
     private function migration(string $name, string $body): void
@@ -45,15 +48,18 @@ final class MigratorTest extends TestCase
 
     private function migrator(): Migrator
     {
-        return new Migrator($this->connection, $this->path);
+        return new Migrator($this->db, $this->path);
     }
 
     private function tableExists(string $table): bool
     {
-        return $this->connection->selectOne(
-            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
-            [$table],
-        ) !== null;
+        try {
+            $this->db->select('SELECT * FROM ' . $this->q($table) . ' WHERE 1 = 0');
+
+            return true;
+        } catch (Throwable) {
+            return false;
+        }
     }
 
     #[Test]
@@ -128,10 +134,17 @@ final class MigratorTest extends TestCase
             // expected
         }
 
-        // The half-finished work must not survive, and the migration must not
-        // be recorded as applied, otherwise a retry silently skips it.
-        $this->assertFalse($this->tableExists('half_done'));
+        // This half must hold everywhere: an unrecorded migration is retried,
+        // a recorded one is silently skipped and the schema stays broken.
         $this->assertArrayHasKey('001_broken', $this->migrator()->pending());
+
+        if ($this->db->grammar()->supportsTransactionalDdl()) {
+            $this->assertFalse($this->tableExists('half_done'), 'the partial schema was rolled back');
+        } else {
+            // MySQL commits implicitly on DDL, so the earlier statement stands.
+            // The framework cannot undo that; it can only be honest about it.
+            $this->assertTrue($this->tableExists('half_done'), 'MySQL cannot roll back DDL');
+        }
     }
 
     #[Test]
@@ -151,7 +164,7 @@ final class MigratorTest extends TestCase
         $this->expectException(RuntimeException::class);
         $this->expectExceptionMessage('does not exist');
 
-        (new Migrator($this->connection, $this->path . '/nope'))->run();
+        (new Migrator($this->db, $this->path . '/nope'))->run();
     }
 
     #[Test]
@@ -166,7 +179,7 @@ final class MigratorTest extends TestCase
         $this->migration('001_first', '$db->statement("CREATE TABLE first (id INTEGER PRIMARY KEY)");');
         $this->migrator()->run();
 
-        $row = $this->connection->selectOne('SELECT name, applied_at FROM migrations');
+        $row = $this->db->selectOne('SELECT name, applied_at FROM migrations');
 
         $this->assertSame('001_first', $row['name']);
         $this->assertNotEmpty($row['applied_at']);
