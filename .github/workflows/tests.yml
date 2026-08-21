@@ -34,6 +34,62 @@ jobs:
 
       - run: ./vendor/bin/phpunit
 
+  # The bugs that only exist on a database you did not develop on: Postgres
+  # rejects backticks, MySQL commits implicitly on DDL, and PDO returns every
+  # column as a string on MySQL. None of it shows up under SQLite.
+  databases:
+    runs-on: ubuntu-latest
+    name: Framework / ${{ matrix.driver }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - driver: mysql
+            port: 3306
+          - driver: pgsql
+            port: 5432
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: secret
+          MYSQL_DATABASE: phpvin_test
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd="mysqladmin ping -psecret"
+          --health-interval=10s --health-timeout=5s --health-retries=10
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: secret
+          POSTGRES_DB: phpvin_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd=pg_isready
+          --health-interval=10s --health-timeout=5s --health-retries=10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: pdo, pdo_sqlite, pdo_mysql, pdo_pgsql
+          coverage: none
+
+      - run: composer install --prefer-dist --no-interaction --no-progress
+
+      - run: ./vendor/bin/phpunit
+        env:
+          DB_DRIVER: ${{ matrix.driver }}
+          DB_HOST: 127.0.0.1
+          DB_PORT: ${{ matrix.port }}
+          DB_DATABASE: phpvin_test
+          DB_USERNAME: ${{ matrix.driver == 'mysql' && 'root' || 'postgres' }}
+          DB_PASSWORD: secret
+
   quality:
     runs-on: ubuntu-latest
     name: Framework / static analysis and style

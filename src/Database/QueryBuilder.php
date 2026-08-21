@@ -440,24 +440,34 @@ final class QueryBuilder
      * @param  array<string, mixed> $data
      * @return string The new primary key, as reported by the driver.
      */
-    public function insert(array $data): string
+    public function insert(array $data, ?string $returning = null): string
     {
         if ($data === []) {
             throw new InvalidArgumentException('Cannot insert an empty row.');
         }
 
+        $grammar = $this->connection->grammar();
         $columns = array_map($this->identifier(...), array_keys($data));
         $placeholders = implode(', ', array_fill(0, count($data), '?'));
 
-        return $this->connection->insert(
-            sprintf(
-                'INSERT INTO %s (%s) VALUES (%s)',
-                $this->identifier($this->table),
-                implode(', ', $columns),
-                $placeholders,
-            ),
-            array_values($data),
+        $sql = sprintf(
+            'INSERT INTO %s (%s) VALUES (%s)',
+            $this->identifier($this->table),
+            implode(', ', $columns),
+            $placeholders,
         );
+
+        // Postgres has no reliable lastInsertId(), so ask the INSERT itself.
+        if ($returning !== null && $grammar->supportsReturning()) {
+            $row = $this->connection->selectOne(
+                $sql . $grammar->compileReturning($returning),
+                array_values($data),
+            );
+
+            return (string) ($row[$returning] ?? '');
+        }
+
+        return $this->connection->insert($sql, array_values($data));
     }
 
     /**
@@ -519,17 +529,7 @@ final class QueryBuilder
             $sql .= ' ORDER BY ' . implode(', ', $this->orders);
         }
 
-        if ($this->limit !== null) {
-            $sql .= ' LIMIT ' . $this->limit;
-        }
-
-        if ($this->offset !== null) {
-            // MySQL and SQLite both refuse OFFSET without LIMIT, so stand in
-            // the largest value every supported driver accepts as a bigint.
-            $sql .= ($this->limit === null ? ' LIMIT ' . PHP_INT_MAX : '') . ' OFFSET ' . $this->offset;
-        }
-
-        return $sql;
+        return $sql . $this->connection->grammar()->compileLimitOffset($this->limit, $this->offset);
     }
 
     /** @return list<mixed> */
@@ -638,21 +638,13 @@ final class QueryBuilder
     }
 
     /**
-     * Quote an identifier, rejecting anything that is not a plain name or a
-     * `table.column` pair. Backticks work on both MySQL and SQLite.
+     * Quote an identifier using this connection's dialect.
+     *
+     * MySQL and SQLite want backticks; Postgres wants double quotes and
+     * rejects backticks outright. The grammar knows which.
      */
     private function identifier(string $name): string
     {
-        $parts = explode('.', $name);
-
-        foreach ($parts as $part) {
-            if (preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $part) !== 1) {
-                throw new InvalidArgumentException(
-                    "[$name] is not a valid column or table name. Identifiers cannot be built from user input.",
-                );
-            }
-        }
-
-        return '`' . implode('`.`', $parts) . '`';
+        return $this->connection->grammar()->quote($name);
     }
 }

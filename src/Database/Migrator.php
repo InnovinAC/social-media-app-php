@@ -21,6 +21,12 @@ use RuntimeException;
  *
  * Applied migrations are recorded in a `migrations` table, so running twice is
  * a no-op rather than an error.
+ *
+ * Each migration runs inside a transaction, which on SQLite and Postgres means
+ * a failure halfway through leaves no trace. MySQL commits implicitly on DDL,
+ * so there the earlier statements in a failed migration stay applied. Check
+ * `Grammar::supportsTransactionalDdl()` if that matters to you. Either way the
+ * migration is not recorded, so a retry runs it again.
  */
 final class Migrator
 {

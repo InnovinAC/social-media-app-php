@@ -364,7 +364,7 @@ abstract class Model implements JsonSerializable
             $this->attributes['updated_at'] ??= $now;
         }
 
-        $id = static::query()->insert($this->forStorage($this->attributes));
+        $id = static::query()->insert($this->forStorage($this->attributes), static::$primaryKey);
 
         if (! isset($this->attributes[static::$primaryKey]) && $id !== '' && $id !== '0') {
             $this->attributes[static::$primaryKey] = is_numeric($id) ? (int) $id : $id;
@@ -495,9 +495,9 @@ abstract class Model implements JsonSerializable
         return match ($type) {
             'int', 'integer' => (int) $value,
             'float', 'double' => (float) $value,
-            'bool', 'boolean' => is_string($value)
-                ? filter_var($value, FILTER_VALIDATE_BOOL)
-                : (bool) $value,
+            // Via the grammar: Postgres can report a boolean as 't'/'f', and
+            // filter_var() reads 't' as false.
+            'bool', 'boolean' => static::connection()->grammar()->toBool($value),
             'string' => (string) $value,
             'array', 'json' => is_array($value)
                 ? $value
@@ -526,7 +526,9 @@ abstract class Model implements JsonSerializable
 
             $attributes[$key] = match (static::$casts[$key] ?? null) {
                 'array', 'json' => is_string($value) ? $value : json_encode($value, JSON_THROW_ON_ERROR),
-                'bool', 'boolean' => (int) (is_string($value) ? filter_var($value, FILTER_VALIDATE_BOOL) : $value),
+                'bool', 'boolean' => static::connection()->grammar()->fromBool(
+                    static::connection()->grammar()->toBool($value),
+                ),
                 'datetime' => $value instanceof DateTimeInterface
                     ? $value->format('Y-m-d H:i:s')
                     : (string) $value,

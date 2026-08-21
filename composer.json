@@ -1,6 +1,6 @@
 {
     "name": "innovin/phpvin",
-    "description": "A small server-rendered PHP framework. Explicit wiring, no facades, no globals, small enough to read in one sitting.",
+    "description": "A small server-rendered PHP framework. Explicit wiring, no facades, no globals \u2014 small enough to read in one sitting.",
     "type": "library",
     "keywords": [
         "framework",
@@ -49,13 +49,20 @@
     },
     "scripts": {
         "test": "phpunit",
-        "analyse": "phpstan analyse --memory-limit=512M",
+        "analyse": "phpstan analyse --no-progress --memory-limit=512M",
         "style": "php-cs-fixer fix --dry-run --diff",
         "style:fix": "php-cs-fixer fix",
         "check": [
             "@style",
             "@analyse",
             "@test"
+        ],
+        "test:mysql": "DB_DRIVER=mysql phpunit",
+        "test:pgsql": "DB_DRIVER=pgsql phpunit",
+        "test:drivers": [
+            "@test",
+            "@test:mysql",
+            "@test:pgsql"
         ]
     },
     "extra": {
@@ -70,9 +77,7 @@
     "minimum-stability": "stable",
     "prefer-stable": true,
     "scripts-descriptions": {
-        "test": "Run the test suite",
-        "analyse": "Run PHPStan",
-        "style": "Check code style without changing anything",
-        "check": "Everything CI runs"
+        "test:drivers": "Run the suite against SQLite, MySQL and Postgres (needs `make db-up`).",
+        "check": "Everything CI runs on a single driver."
     }
 }
