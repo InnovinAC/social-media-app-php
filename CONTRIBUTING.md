@@ -115,6 +115,29 @@ with a `GROUP BY`, say, which only SQLite tolerates), that is the generator's
 bug, not the framework's. Fix the generator to name its columns. Portability of
 queries nobody promised to support is not the property under test.
 
+### Concurrency
+
+`tests/ConcurrencyTest.php` spawns real PHP processes. That is deliberate and
+worth preserving: a single-process suite runs each operation to completion
+before starting the next, which is the one condition under which a
+read-modify-write race cannot happen. Serial tests are therefore not weak
+evidence about concurrency; they are no evidence at all, and they read as
+reassurance, which is worse.
+
+The rate limiter shipped such a race. `hit()` read a count, added one and wrote
+it back; `write()` passed `LOCK_EX`, which looks like it covers the sequence
+and does not, because the lock is taken for the write alone. Sixty concurrent
+attempts recorded six.
+
+If you touch anything that counts, locks, or writes a file two requests could
+reach at once, write the process-spawning test and **watch it fail against the
+unfixed code first**. A concurrency test that has never failed has not been
+shown to be able to.
+
+Keep these tests small. Mutation testing reruns the suite hundreds of times, so
+a dozen spawned processes per run is a real cost. Verify at a high worker
+count, then turn it down and leave a note saying what it was verified at.
+
 ### Packaging
 
 There is a fourth check worth running when you touch anything outside `src/`:
