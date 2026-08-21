@@ -16,6 +16,7 @@ use Phpvin\View\PhpEngine;
 use Phpvin\View\TwigEngine;
 use Phpvin\View\ViewFactory;
 use Phpvin\View\ViewNotFound;
+use ReflectionProperty;
 use RuntimeException;
 
 final class ViewEngineTest extends TestCase
@@ -233,6 +234,48 @@ final class ViewEngineTest extends TestCase
             => $views->response('greeting', ['name' => 'world']));
 
         $this->assertStringContainsString('Hello, world', $app->handle(Request::create('GET', '/'))->body());
+    }
+
+    #[Test]
+    public function a_template_that_fails_after_asking_for_a_layout_leaves_nothing_behind(): void
+    {
+        // The layout request is pushed before the template is evaluated and
+        // taken off after, so a template that throws in between leaves its
+        // request on the stack with nothing to ever remove it. Under mod_php
+        // that is invisible, because the process dies either way; a worker
+        // that boots once and serves for days keeps one more entry for every
+        // render that errors, and template errors are ordinary.
+        $root = sys_get_temp_dir() . '/phpvin-layout-' . bin2hex(random_bytes(6));
+        mkdir($root, 0o777, true);
+
+        file_put_contents($root . '/shell.php', '<?= $this->section() ?>');
+        file_put_contents(
+            $root . '/explodes.php',
+            '<?php $this->layout("shell") ?><?php throw new \RuntimeException("boom"); ?>',
+        );
+        file_put_contents(
+            $root . '/fine.php',
+            '<?php $this->layout("shell") ?>ok',
+        );
+
+        $engine = new PhpEngine($root);
+        $depth = new ReflectionProperty($engine, 'layoutStack');
+
+        for ($i = 0; $i < 5; $i++) {
+            try {
+                $engine->render('explodes');
+                $this->fail('Expected the template to throw.');
+            } catch (RuntimeException) {
+                // expected
+            }
+        }
+
+        $this->assertCount(0, $depth->getValue($engine), 'a failed render left its layout on the stack');
+
+        // And the engine is still usable afterwards, rather than merely tidy.
+        $this->assertSame('ok', $engine->render('fine'));
+
+        exec('rm -rf ' . escapeshellarg($root));
     }
 }
 

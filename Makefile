@@ -19,6 +19,7 @@ help:
 	@echo "package-check Verify the framework installs and boots as a real dependency"
 	@echo "fuzz          Throw hostile input at every parser"
 	@echo "differential  Run generated queries against every driver and compare"
+	@echo "memory        Measure what a booted app retains per request"
 	@echo "vendor-js     Download jQuery into the skeleton"
 	@echo "serve         Run the skeleton at http://localhost:8000"
 	@echo "migrate       Apply pending migrations"
@@ -127,6 +128,13 @@ fuzz:
 # disagreement is a grammar bug by definition. Needs `make db-up`.
 differential:
 	@./bin/differential --queries=2000
+
+.PHONY: memory
+
+# What a booted application retains per request. bench answers how fast; this
+# answers whether a process that boots once and serves for days is safe.
+memory:
+	@./bin/memory
 
 .PHONY: bench
 

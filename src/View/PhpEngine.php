@@ -47,7 +47,20 @@ final class PhpEngine implements Engine, SupportsFunctions
         }
 
         $layoutDepth = count($this->layoutStack);
-        $output = $this->evaluate($file, [...$this->shared, ...$data]);
+
+        try {
+            $output = $this->evaluate($file, [...$this->shared, ...$data]);
+        } catch (Throwable $throwable) {
+            // The template asked for a layout and then failed, so its request
+            // is still on the stack and nothing will ever take it off. Under
+            // mod_php that is invisible -- the process dies either way -- but
+            // a worker that boots once and serves for days keeps one more
+            // entry for every render that errors, and template errors are
+            // ordinary rather than exceptional.
+            array_splice($this->layoutStack, $layoutDepth);
+
+            throw $throwable;
+        }
 
         // If the template asked for a layout, render that layout with this
         // template's output available as $this->section().

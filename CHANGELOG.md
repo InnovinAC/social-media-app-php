@@ -76,7 +76,27 @@ kept in full: the point of a first changelog is not to look uneventful.
   which has neither, gets the equivalent `IS NULL` sort key. Found by
   `bin/differential`.
 
+### Added
+
+- **`bin/memory`.** Measures what a booted application retains per request
+  rather than how fast it serves one. Under mod_php or FPM a leak is invisible,
+  because the interpreter tears everything down every time; under FrankenPHP,
+  RoadRunner, Swoole or a queue worker the process boots once and serves for
+  days, and a few hundred retained bytes per request is a restart loop. Growth
+  is measured after a warm-up, since the first few hundred requests are
+  one-time allocations. Every path currently retains nothing.
+
 ### Fixed
+
+- **A failed render leaked its layout.** `PhpEngine` pushes a template's layout
+  request before evaluating it and takes it off after, so a template that threw
+  in between left the request on the stack with nothing to ever remove it.
+  Rendering is correct either way (the depth comparison is relative), but a
+  worker that boots once and serves for days keeps one more entry for every
+  render that errors, and template errors are ordinary rather than exceptional.
+  Measured at 382MB per million failed renders. The stack now unwinds to the
+  depth it was entered at.
+
 
 - **Concurrent deploys could run the same migration more than once.** Every
   process asked which migrations were pending, all got the same answer, and all

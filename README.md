@@ -213,10 +213,26 @@ the table name on a column that the subquery had put out of scope, and null
 ordering silently diverged between engines. Neither was reachable from a test
 someone would think to write.
 
+`bin/memory` asks the question that only matters once the process outlives the
+request: does handling one leave anything behind? Under mod_php or FPM a leak
+is invisible, because the interpreter tears everything down each time. Under
+FrankenPHP, RoadRunner, Swoole or a queue worker the process boots once and
+serves for days, and a few hundred retained bytes per request is a restart
+loop:
+
+```bash
+make memory
+```
+
+Every path currently retains nothing. It found one that did not: a template
+that threw after asking for a layout left the request on the engine's stack
+forever: 382MB per million failed renders, and template errors are ordinary
+rather than exceptional.
+
 CI runs the matrix on PHP 8.2, 8.3 and 8.4, plus PHPStan level 6, code style, a
 packaging check, mutation testing, a fresh-seed fuzz run, cross-driver
-agreement, and a `--no-dev` job that boots an API-only app with no optional
-package installed.
+agreement, memory retention, and a `--no-dev` job that boots an API-only app
+with no optional package installed.
 
 ### Testing your own application
 
