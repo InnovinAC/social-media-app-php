@@ -1,0 +1,125 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+/**
+ * Measure the framework's hot paths.
+ *
+ * Numbers on their own mean little; what matters is whether they move when
+ * you change something, and whether they degrade as an application grows. So
+ * routing is measured against a realistic route table rather than three
+ * routes, and the worst case (the last route registered) is reported next to
+ * the best.
+ *
+ *     bin/bench
+ *     bin/bench --routes=500 --iterations=20000
+ */
+
+require dirname(__DIR__) . '/vendor/autoload.php';
+
+use Phpvin\Application;
+use Phpvin\Container\Container;
+use Phpvin\Http\Request;
+use Phpvin\Http\Response;
+use Phpvin\Routing\Router;
+
+$options = getopt('', ['routes::', 'iterations::']);
+$routeCount = (int) ($options['routes'] ?? 200);
+$iterations = (int) ($options['iterations'] ?? 10_000);
+
+function bench(string $label, int $iterations, callable $work): void
+{
+    // One untimed pass, so the first-call cost of lazy work is not counted as
+    // if every call paid it.
+    $work();
+
+    $started = hrtime(true);
+
+    for ($i = 0; $i < $iterations; $i++) {
+        $work();
+    }
+
+    $elapsed = (hrtime(true) - $started) / 1e9;
+    $perOp = $elapsed / $iterations;
+
+    printf(
+        "  %-42s %8.2f µs/op   %10s ops/sec\n",
+        $label,
+        $perOp * 1e6,
+        number_format(1 / $perOp),
+    );
+}
+
+function routerWith(int $count): Router
+{
+    $router = new Router();
+    $handler = static fn (): string => 'ok';
+
+    for ($i = 0; $i < $count; $i++) {
+        $router->get("/resource-$i", $handler, as: "resource.$i");
+        $router->get("/resource-$i/{id}", $handler, as: "resource.$i.show", where: ['id' => '\d+']);
+    }
+
+    return $router;
+}
+
+printf("phpvin bench: %d routes, %s iterations\n\n", $routeCount, number_format($iterations));
+
+$router = routerWith($routeCount);
+$first = Request::create('GET', '/resource-0');
+$last = Request::create('GET', '/resource-' . ($routeCount - 1) . '/42');
+$missing = Request::create('GET', '/nothing-matches-this');
+
+echo "Routing\n";
+bench('match the first route', $iterations, fn () => $router->resolve($first));
+bench('match the last route (worst case)', $iterations, fn () => $router->resolve($last));
+bench('no match (404)', $iterations, function () use ($router, $missing): void {
+    try {
+        $router->resolve($missing);
+    } catch (Throwable) {
+    }
+});
+
+echo "\nContainer\n";
+$container = new Container();
+$container->singleton(Router::class, static fn (): Router => new Router());
+bench('resolve a singleton', $iterations, fn () => $container->get(Router::class));
+bench('autowire a fresh instance', $iterations, fn () => $container->get(BenchService::class));
+bench('call a closure with injection', $iterations, fn () => $container->call(
+    static fn (BenchService $s, int $id): int => $id,
+    ['id' => '42'],
+));
+
+echo "\nWhole request\n";
+$app = new Application(dirname(__DIR__), [
+    'views' => ['engine' => 'none'],
+    'session' => false,
+    'providers' => [],
+]);
+
+for ($i = 0; $i < $routeCount; $i++) {
+    $app->router()->get("/resource-$i", static fn (): Response => Response::html('ok'));
+}
+
+$app->router()->get('/api/item/{id}', static fn (int $id): array => ['id' => $id], where: ['id' => '\d+']);
+
+$html = Request::create('GET', '/resource-0');
+$json = Request::create('GET', '/api/item/42');
+
+bench('handle() -> html', $iterations, fn () => $app->handle($html));
+bench('handle() -> json', $iterations, fn () => $app->handle($json));
+bench('handle() -> 404', $iterations, fn () => $app->handle($missing));
+
+printf("\nPeak memory: %.1f MB\n", memory_get_peak_usage(true) / 1048576);
+
+final class BenchService
+{
+    public function __construct(public readonly ?BenchDependency $dependency = null)
+    {
+    }
+}
+
+final class BenchDependency
+{
+}
