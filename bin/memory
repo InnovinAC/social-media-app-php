@@ -24,6 +24,9 @@ declare(strict_types=1);
  */
 
 require __DIR__ . '/../vendor/autoload.php';
+require __DIR__ . '/guard.php';
+
+refuseWhileMutating('bin/memory');
 
 use Phpvin\Application;
 use Phpvin\Container\Container;

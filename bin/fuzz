@@ -26,6 +26,9 @@ declare(strict_types=1);
  */
 
 require __DIR__ . '/../vendor/autoload.php';
+require __DIR__ . '/guard.php';
+
+refuseWhileMutating('bin/fuzz');
 
 use Phpvin\Cache\FileStore;
 use Phpvin\Cache\InvalidCacheKey;

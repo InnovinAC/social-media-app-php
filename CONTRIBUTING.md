@@ -53,13 +53,24 @@ is true, in rough order of likelihood:
 3. **The code is dead.** Delete it. Several survivors turned out to be
    redundant guards and unreachable fallbacks.
 
-`bin/mutate` edits real files, so do not run anything else against the working
-tree while it is going, a concurrent test run or `bin/fuzz` will read whichever
-mutant happens to be applied and report a bug that does not exist. It puts every
-file back on the way out, including on Ctrl-C, a CI timeout or a fatal error,
-and verifies before printing a score that it actually did. If it ever reports
-that it left the tree modified, `git checkout` before trusting anything you ran
-after it.
+`bin/mutate` edits real files, so nothing else can read the tree while it is
+going. A concurrent test run reads whichever mutant happens to be applied and
+reports a bug that does not exist. That is enforced rather than asked for: the
+run takes a lock, and `bin/fuzz`, `bin/differential`, `bin/memory` and
+`bin/package-check` all refuse while it is held, as does a second `bin/mutate`.
+A lock left behind by a killed run is reclaimed automatically rather than
+needing a human to delete it.
+
+The enforcement exists because the note that used to be here did not work. Both
+failures happened during this framework's own development, to the person who
+wrote the note: a concurrent fuzz run reported a `TypeError` that did not
+exist, and a packaging check packaged a mutated source and failed. Each cost
+more time than the run it overlapped.
+
+`bin/mutate` also puts every file back on the way out, including on Ctrl-C, a
+CI timeout or a fatal error, and verifies before printing a score that it
+actually did. If it ever reports that it left the tree modified, `git checkout`
+before trusting anything you ran after it.
 
 ### Fuzzing
 
