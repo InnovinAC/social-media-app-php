@@ -87,6 +87,34 @@ target, because it reads as coverage. One here compared an unresolved path
 against its own root prefix, which passes for `/root/../etc/passwd`; it was
 found exactly this way.
 
+### Cross-driver agreement
+
+Mutation testing asks whether the tests would notice the code changing.
+Fuzzing asks whether the code notices the input changing. `bin/differential`
+asks a third thing: whether the three drivers agree.
+
+```bash
+make db-up && make differential
+./bin/differential --seed=12345
+```
+
+It generates query shapes (joins, groups, havings, null-heavy sorts, limits,
+offsets), runs each against SQLite, MySQL and Postgres, and requires one
+answer. There is no expected result to write down: the oracle is agreement,
+because the promise the framework makes is that changing the driver does not
+change the result. A disagreement is therefore a grammar bug by definition, and
+which driver is "right" is usually beside the point.
+
+Two things it found immediately, neither reachable from a test anyone would sit
+down and write: an aggregate over a grouped query kept the table name on a
+column the subquery had put out of scope, and null ordering diverged silently
+between engines.
+
+If a generated query is *invalid SQL* rather than a disagreement (`SELECT *`
+with a `GROUP BY`, say, which only SQLite tolerates), that is the generator's
+bug, not the framework's. Fix the generator to name its columns. Portability of
+queries nobody promised to support is not the property under test.
+
 ### Packaging
 
 There is a fourth check worth running when you touch anything outside `src/`:

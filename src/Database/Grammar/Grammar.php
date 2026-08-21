@@ -59,6 +59,32 @@ abstract class Grammar
      *
      * MySQL and SQLite refuse OFFSET without LIMIT; Postgres allows it.
      */
+    /**
+     * Compile one ORDER BY term with an explicit place for nulls.
+     *
+     * Engines disagree about where a null sorts, and they disagree silently.
+     * SQLite and MySQL treat null as the smallest value, so a DESC sort puts
+     * nulls last; Postgres treats it as the largest, so the same sort puts
+     * them first. Add a LIMIT and the two return different rows for the same
+     * query, which is exactly the sort of thing that is found in production
+     * rather than in a test.
+     *
+     * Postgres and SQLite both understand NULLS FIRST/LAST. MySQL does not,
+     * and is given the `IS NULL` form that means the same thing.
+     *
+     * @param string|null $nulls 'first', 'last', or null for the engine default
+     */
+    public function compileOrder(string $quotedColumn, string $direction, ?string $nulls): string
+    {
+        $term = $quotedColumn . ' ' . $direction;
+
+        if ($nulls === null) {
+            return $term;
+        }
+
+        return $term . ' NULLS ' . strtoupper($nulls);
+    }
+
     public function compileLimitOffset(?int $limit, ?int $offset): string
     {
         $sql = '';

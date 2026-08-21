@@ -51,8 +51,31 @@ pre-1.0 caveat that the API may still move.
   flip it, and require all of them to fail to open, on both backends. Plus
   truncation at every length, cipher downgrade, and a wrong key.
 
+### Added
+
+- **`bin/differential`.** Generates query shapes and asks every driver the same
+  question, requiring one answer. A disagreement is a grammar bug by
+  definition: the promise the framework makes is that swapping the driver does
+  not change the result, so the oracle is agreement rather than a hand-written
+  expectation. The dangerous queries are the ones nobody sat down to write,
+  like the left join with a group by and an offset that compiles differently on one
+  engine. Those are found by generating them, not by waiting for a report.
+- **`orderBy(..., nulls: 'first'|'last')`.** Engines disagree about where a
+  null sorts and disagree silently: SQLite and MySQL treat null as the smallest
+  value, Postgres as the largest, so the same `desc` sort puts nulls at
+  opposite ends. Add a `limit` and the same query returns different rows on
+  different drivers. Postgres and SQLite get `NULLS FIRST`/`NULLS LAST`; MySQL,
+  which has neither, gets the equivalent `IS NULL` sort key. Found by
+  `bin/differential`.
+
 ### Fixed
 
+- **Aggregates over a grouped query rejected a qualified column.** A grouped
+  select is wrapped in a subquery aliased `grouped`, and the aggregate kept the
+  original table on the column, naming a table that is no longer in scope, so
+  `->groupBy(...)->max('posts.views')` failed on SQLite, MySQL and Postgres
+  alike. Broken everywhere at once rather than on one driver, which is why the
+  cross-driver suite never caught it and a generated query did.
 - **`bin/mutate` could leave a mutant in the working tree.** A mutant is a
   deliberate edit to a real file, and the restore had no `finally` and no
   signal handling despite a comment claiming it always ran. A run stopped part

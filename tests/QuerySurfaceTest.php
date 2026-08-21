@@ -374,4 +374,110 @@ final class QuerySurfaceTest extends DatabaseTestCase
         $this->assertStringContainsString($this->sql('WHERE `status` = ?'), end($log)['sql']);
         $this->assertSame(['draft'], end($log)['bindings']);
     }
+
+    // --- cross-driver agreement -------------------------------------------
+
+    #[Test]
+    public function an_aggregate_over_a_grouped_query_accepts_a_qualified_column(): void
+    {
+        // The grouped select becomes a subquery aliased `grouped`, inside
+        // which `posts.views` names a table that is no longer in scope. Every
+        // driver rejected it, so this was broken everywhere at once rather
+        // than being a portability wrinkle -- which is why no cross-driver
+        // test caught it and a generated one did.
+        $query = fn (): QueryBuilder => (new QueryBuilder($this->db, 'posts'))
+            ->select(['posts.views'])
+            ->groupBy('posts.views');
+
+        $this->assertSame(5, $query()->count('posts.views'));
+        $this->assertSame(26.0, $query()->sum('posts.views'));
+        $this->assertSame(10, (int) $query()->max('posts.views'));
+        $this->assertSame(1, (int) $query()->min('posts.views'));
+    }
+
+    #[Test]
+    public function the_unqualified_form_still_works_when_grouped(): void
+    {
+        $query = (new QueryBuilder($this->db, 'posts'))
+            ->select(['views'])
+            ->groupBy('views');
+
+        $this->assertSame(5, $query->count('views'));
+    }
+
+    #[Test]
+    public function nulls_can_be_placed_explicitly_and_land_the_same_way_everywhere(): void
+    {
+        // SQLite and MySQL sort null as the smallest value, Postgres as the
+        // largest, so `orderBy('score', 'desc')` puts nulls at opposite ends
+        // depending on the driver -- silently, and visibly only once a limit
+        // starts cutting the result somewhere different. Asking for a
+        // placement is how you stop that being the driver's decision.
+        $this->createTable('scores', ['id' => 'id', 'score' => 'int']);
+
+        foreach ([10, null, 30, null, 20] as $score) {
+            $this->db->statement(
+                'INSERT INTO ' . $this->q('scores') . ' (' . $this->q('score') . ') VALUES (?)',
+                [$score],
+            );
+        }
+
+        $ordered = static fn (array $rows): string => implode(',', array_map(
+            static fn (array $row): string => $row['score'] === null ? 'NULL' : (string) (int) $row['score'],
+            $rows,
+        ));
+
+        $descLast = (new QueryBuilder($this->db, 'scores'))
+            ->orderBy('score', 'desc', nulls: 'last')->orderBy('id')->get();
+
+        $descFirst = (new QueryBuilder($this->db, 'scores'))
+            ->orderBy('score', 'desc', nulls: 'first')->orderBy('id')->get();
+
+        $ascFirst = (new QueryBuilder($this->db, 'scores'))
+            ->orderBy('score', 'asc', nulls: 'first')->orderBy('id')->get();
+
+        $this->assertSame('30,20,10,NULL,NULL', $ordered($descLast));
+        $this->assertSame('NULL,NULL,30,20,10', $ordered($descFirst));
+        $this->assertSame('NULL,NULL,10,20,30', $ordered($ascFirst));
+    }
+
+    #[Test]
+    public function distinct_applies_to_count_and_not_to_the_other_aggregates(): void
+    {
+        // `distinct()` narrows what is being counted, which is what people
+        // reach for it to do. It deliberately does not reach SUM or AVG: a
+        // distinct sum is a different question, and one you should have to ask
+        // for in so many words rather than get as a side effect of a call
+        // further up the chain.
+        //
+        // Every value here repeats, because with distinct data the two forms
+        // agree and the distinction is invisible.
+        $this->createTable('votes', ['id' => 'id', 'weight' => 'int']);
+
+        foreach ([5, 5, 5, 10, 10] as $weight) {
+            $this->db->statement(
+                'INSERT INTO ' . $this->q('votes') . ' (' . $this->q('weight') . ') VALUES (?)',
+                [$weight],
+            );
+        }
+
+        $query = fn (): QueryBuilder => new QueryBuilder($this->db, 'votes');
+
+        $this->assertSame(5, $query()->count('weight'));
+        $this->assertSame(2, $query()->distinct()->count('weight'));
+
+        // 35, not the 15 a distinct sum would give.
+        $this->assertSame(35.0, $query()->sum('weight'));
+        $this->assertSame(35.0, $query()->distinct()->sum('weight'));
+        $this->assertSame(7.0, $query()->distinct()->avg('weight'));
+    }
+
+    #[Test]
+    public function a_null_placement_that_is_not_first_or_last_is_refused(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('first or last');
+
+        (new QueryBuilder($this->db, 'posts'))->orderBy('views', 'asc', nulls: 'middle');
+    }
 }

@@ -167,7 +167,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Testing
 
-743 tests. They run against SQLite by default, nothing to install, and the
+748 tests. They run against SQLite by default, nothing to install, and the
 same suite runs against MySQL 8 and Postgres 16, because the interesting bugs
 only exist on a database you did not develop on. Postgres rejects the backticks
 MySQL requires; MySQL commits implicitly on DDL and hands back every column as a
@@ -178,7 +178,7 @@ make db-up && make test-drivers
 ```
 
 The suite is also mutation tested: `bin/mutate` breaks the source one edit at a
-time and checks the tests notice. **497 mutants, 100% killed** across the three
+time and checks the tests notice. **505 mutants, 100% killed** across the three
 drivers. That number is the one worth trusting; a passing suite only proves the
 tests ran.
 
@@ -197,9 +197,26 @@ seed, so a CI failure replays exactly:
 make fuzz
 ```
 
+`bin/differential` asks a different question again: not "is this right" but
+"do the three drivers agree". It generates query shapes (joins, groups,
+havings, null-heavy sorts, limits and offsets), runs each against SQLite, MySQL
+and Postgres, and requires one answer. A disagreement is a grammar bug by
+definition, because the promise is that changing the driver does not change the
+result:
+
+```bash
+make db-up && make differential
+```
+
+It has already earned its place twice: an aggregate over a grouped query kept
+the table name on a column that the subquery had put out of scope, and null
+ordering silently diverged between engines. Neither was reachable from a test
+someone would think to write.
+
 CI runs the matrix on PHP 8.2, 8.3 and 8.4, plus PHPStan level 6, code style, a
-packaging check, mutation testing, a fresh-seed fuzz run, and a `--no-dev` job
-that boots an API-only app with no optional package installed.
+packaging check, mutation testing, a fresh-seed fuzz run, cross-driver
+agreement, and a `--no-dev` job that boots an API-only app with no optional
+package installed.
 
 ### Testing your own application
 
@@ -277,9 +294,9 @@ what has moved.
 "Battle-tested" gets used for two different things, and it is worth being
 precise about which one this has.
 
-The first is engineering rigour, and that is measurable. Every merge runs 743
+The first is engineering rigour, and that is measurable. Every merge runs 748
 tests against SQLite, MySQL 8 and Postgres 16, on PHP 8.2, 8.3 and 8.4. Every
-mutant of the source, 497 of them, is killed by the suite on all three
+mutant of the source, 505 of them, is killed by the suite on all three
 drivers, which means there is no line you can silently change and still go
 green. PHPStan runs at level 6. `bin/package-check` builds the distribution the
 way `.gitattributes` says it ships, installs it as a real copy rather than a
