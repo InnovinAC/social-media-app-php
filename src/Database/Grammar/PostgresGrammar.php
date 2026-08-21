@@ -28,4 +28,18 @@ final class PostgresGrammar extends Grammar
 
         return $offset === null ? $sql : $sql . ' OFFSET ' . $offset;
     }
+
+    /**
+     * Postgres advisory locks are taken on a bigint rather than a name and are
+     * released when the session ends. The non-blocking form is used with the
+     * caller's retry loop, so a stuck holder produces a clear timeout rather
+     * than a deploy that hangs forever.
+     */
+    public function migrationLock(): MigrationLock
+    {
+        return new MigrationLock(
+            acquire: 'SELECT pg_try_advisory_lock(3141592653) AS acquired',
+            release: 'SELECT pg_advisory_unlock(3141592653) AS released',
+        );
+    }
 }

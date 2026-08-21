@@ -44,6 +44,7 @@ table is meant to be checked against the code rather than believed.
 | Host header poisoning | closed by design | Absolute URLs come from a configured `baseUrl`. The framework never reads `Host` to build a link, so a poisoned one has nothing to poison. |
 | Timing attacks on tokens | closed | `hash_equals` for CSRF and any sealed value. |
 | Rate limit evasion by concurrency | closed | The counter's read-add-write is held under one exclusive lock, so parallel requests cannot each record the same increment. Before this, 60 concurrent attempts registered as 6. |
+| Concurrent deploys double-applying a migration | closed on MySQL and Postgres | A run holds an advisory lock for its whole duration, since the race is between asking what is pending and acting on it. SQLite has no advisory lock and is left unlocked. |
 | Brute force | tool provided | `ThrottleRequests` plus the rate limiter. Yours to apply to the endpoints that need it. |
 | XSS | tool provided | Twig escapes by default; the `php` engine gives you `$e()`. Escaping is the template's job and always will be. |
 | Clickjacking, MIME sniffing | tool provided | `SecurityHeaders`. CSP is yours, because only you know what your pages load. |

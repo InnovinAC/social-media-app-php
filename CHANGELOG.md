@@ -78,6 +78,20 @@ kept in full: the point of a first changelog is not to look uneventful.
 
 ### Fixed
 
+- **Concurrent deploys could run the same migration more than once.** Every
+  process asked which migrations were pending, all got the same answer, and all
+  acted on it. Measured: four simultaneous runs against MySQL, three of which
+  died on `CREATE TABLE ... already exists`. In a rolling deploy, that is three
+  instances that never came up. Postgres happened to survive on lock timing
+  rather than by design. A run now holds an advisory lock for its whole
+  duration, because the race is between reading `pending()` and acting on it,
+  so a per-migration lock would cover nothing. The lock is session-scoped
+  (`GET_LOCK` on MySQL, `pg_try_advisory_lock` on Postgres), so a process
+  killed mid-migration drops its connection and the lock goes with it; a lock
+  row in a table would outlive the crash and need a human to clear it. Waiting
+  is bounded, so a stuck holder fails the deploy with a readable message
+  instead of hanging. SQLite has no advisory lock and is left unlocked, which
+  suits how it is deployed.
 - **The rate limiter lost attempts to a race.** `hit()` read the count, added
   one and wrote it back, with no lock held across the three steps. Requests
   arriving together each read the same number and each stored the same

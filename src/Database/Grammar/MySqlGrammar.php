@@ -36,4 +36,17 @@ final class MySqlGrammar extends Grammar
 
         return $quotedColumn . ' IS NULL ' . ($nulls === 'first' ? 'DESC' : 'ASC') . ', ' . $term;
     }
+
+    /**
+     * GET_LOCK is held by the session and released when it ends, so a killed
+     * deploy cannot leave the lock behind. It returns 1 on success and 0 on
+     * timeout, which the caller checks.
+     */
+    public function migrationLock(): MigrationLock
+    {
+        return new MigrationLock(
+            acquire: "SELECT GET_LOCK('phpvin_migrations', 10) AS acquired",
+            release: "SELECT RELEASE_LOCK('phpvin_migrations') AS released",
+        );
+    }
 }
