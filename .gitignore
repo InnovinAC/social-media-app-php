@@ -9,3 +9,6 @@
 .idea/
 .vscode/
 *.swp
+
+# Local lint cache: machine-specific, and it churns on every run.
+.php-cs-fixer.cache
