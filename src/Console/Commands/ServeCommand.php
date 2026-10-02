@@ -47,14 +47,23 @@ final class ServeCommand implements Command
         // Never for production, and the built-in server says so itself by
         // being single-threaded.
         $command = sprintf(
-            'php -S %s:%s -t %s',
+            'php -S %s:%s -t %s %s',
             escapeshellarg((string) $host),
             escapeshellarg((string) $port),
             escapeshellarg((string) $root),
+            escapeshellarg(self::router()),
         );
 
         passthru($command, $exit);
 
         return $exit;
+    }
+
+    /**
+     * The router script that ships with the framework.
+     */
+    public static function router(): string
+    {
+        return dirname(__DIR__, 3) . '/resources/server.php';
     }
 }

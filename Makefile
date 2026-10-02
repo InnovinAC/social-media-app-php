@@ -56,7 +56,7 @@ $(JQUERY_TARGET):
 	@$(MAKE) --no-print-directory vendor-js
 
 serve: $(JQUERY_TARGET)
-	cd skeleton && php -S localhost:8000 -t public
+	cd skeleton && ./phpvin serve --port=8000
 
 migrate:
 	cd skeleton && ./phpvin migrate

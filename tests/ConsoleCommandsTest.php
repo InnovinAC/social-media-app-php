@@ -402,6 +402,12 @@ final class ConsoleCommandsTest extends TestCase
         $this->assertStringContainsString('no public directory', $this->printed());
     }
 
+    #[Test]
+    public function serve_uses_the_router_that_ships_with_the_framework(): void
+    {
+        $this->assertFileExists(ServeCommand::router());
+    }
+
     /** @return list<string> */
     private function tables(Connection $connection): array
     {
