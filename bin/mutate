@@ -1,0 +1,397 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+/**
+ * A mutation tester for phpvin.
+ *
+ * A green suite proves the tests ran, not that they would notice if the code
+ * broke. This deliberately breaks the source, one small edit at a time, and
+ * reruns the suite. A mutant that gets *killed* means a test caught it. A
+ * mutant that *survives* means that line could be wrong and nothing would say
+ * so.
+ *
+ * Mutations are applied over PHP's own token stream rather than by find and
+ * replace, so a `===` inside a string or a comment is never touched.
+ *
+ *     bin/mutate                        # everything in src/
+ *     bin/mutate --path=src/Database    # one subtree
+ *     bin/mutate --limit=50             # stop after 50 mutants
+ *     bin/mutate --quiet                # survivors only
+ *     bin/mutate --drivers=sqlite,mysql,pgsql
+ *
+ * Coverage is driver-dependent: a branch that only differs on MySQL or Postgres
+ * cannot be killed by a SQLite run. Pass --drivers to try each in turn, so a
+ * survivor means "no database noticed" rather than "SQLite did not".
+ *
+ * Exits non-zero when the score falls below --min (default 90).
+ */
+
+$root = dirname(__DIR__);
+require $root . '/vendor/autoload.php';
+
+/**
+ * Put the source back if this process is stopped part way through.
+ *
+ * A mutant is a deliberate edit to a real file, so a run that dies between the
+ * write and the restore leaves the working tree quietly wrong. The next test
+ * run then fails for a reason that is not in git, and the next `bin/fuzz`
+ * reports a bug nobody introduced. Ctrl-C, a CI timeout and a fatal error all
+ * have to unwind this.
+ */
+$GLOBALS['mutating'] = null;
+
+/**
+ * While a run is going, `src/` on disk is not what git says it is: a mutant is
+ * applied and taken back off hundreds of times. Anything else reading the tree
+ * meanwhile sees a deliberate lie and reports it as a finding -- during this
+ * framework's own development a concurrent `bin/fuzz` reported a TypeError
+ * that did not exist, and a `bin/package-check` packaged a mutated source and
+ * failed. Both cost more time than the runs they overlapped.
+ *
+ * A note in CONTRIBUTING did not prevent either, so the lock is enforced here.
+ * It carries the pid, and a stale one from a killed run is reclaimed rather
+ * than requiring a human to delete a file.
+ */
+$lockPath = sys_get_temp_dir() . '/phpvin-mutate.lock';
+
+$staleLock = static function (string $path): bool {
+    $pid = (int) @file_get_contents($path);
+
+    // Signal 0 tests for the process without touching it.
+    return $pid <= 0 || ! posix_kill($pid, 0);
+};
+
+if (file_exists($lockPath) && ! $staleLock($lockPath)) {
+    fwrite(STDERR, sprintf(
+        "\033[31mAnother mutation run is in progress (pid %s).\033[0m\n"
+        . "Two runs would mutate the same files and report each other's edits as findings.\n",
+        trim((string) @file_get_contents($lockPath)),
+    ));
+
+    exit(3);
+}
+
+file_put_contents($lockPath, (string) getmypid());
+
+register_shutdown_function(static function () use ($lockPath): void {
+    @unlink($lockPath);
+});
+
+$restore = static function (): void {
+    $state = $GLOBALS['mutating'] ?? null;
+
+    if (is_array($state)) {
+        file_put_contents($state['file'], $state['original']);
+        $GLOBALS['mutating'] = null;
+    }
+};
+
+register_shutdown_function($restore);
+
+if (function_exists('pcntl_async_signals')) {
+    pcntl_async_signals(true);
+
+    foreach ([SIGINT, SIGTERM, SIGHUP] as $signal) {
+        pcntl_signal($signal, static function () use ($restore, $lockPath): void {
+            $restore();
+            @unlink($lockPath);
+
+            fwrite(STDERR, "\ninterrupted: the source has been put back\n");
+
+            exit(130);
+        });
+    }
+}
+
+$options = getopt('', ['path::', 'limit::', 'min::', 'drivers::', 'quiet', 'help']);
+
+if (isset($options['help'])) {
+    echo file_get_contents(__FILE__, false, null, 0, 1400), "\n";
+    exit(0);
+}
+
+$path = $root . '/' . trim((string) ($options['path'] ?? 'src'), '/');
+$limit = (int) ($options['limit'] ?? 0);
+$minimumScore = (float) ($options['min'] ?? 90);
+$quiet = isset($options['quiet']);
+
+/**
+ * Which databases to try before calling a mutant a survivor.
+ *
+ * A branch that only differs on Postgres cannot be killed by a SQLite run, so
+ * a single-driver score understates the suite. Each mutant is run against the
+ * drivers in turn and stops at the first one that catches it, which costs
+ * nothing for the mutants that die immediately.
+ */
+$drivers = array_values(array_filter(explode(',', (string) ($options['drivers'] ?? (getenv('DB_DRIVER') ?: 'sqlite')))));
+
+/**
+ * The mutations. Each entry maps a token to the text it becomes.
+ *
+ * Chosen so that a surviving mutant is genuinely suspicious: flipping a
+ * comparison or a boolean connective changes behaviour in every branch that
+ * reaches it.
+ */
+$swaps = [
+    T_IS_IDENTICAL => ['===' => '!=='],
+    T_IS_NOT_IDENTICAL => ['!==' => '==='],
+    T_IS_EQUAL => ['==' => '!='],
+    T_IS_NOT_EQUAL => ['!=' => '==', '<>' => '=='],
+    T_IS_SMALLER_OR_EQUAL => ['<=' => '<'],
+    T_IS_GREATER_OR_EQUAL => ['>=' => '>'],
+    T_BOOLEAN_AND => ['&&' => '||'],
+    T_BOOLEAN_OR => ['||' => '&&'],
+    T_LOGICAL_AND => ['and' => 'or'],
+    T_LOGICAL_OR => ['or' => 'and'],
+];
+
+$literalSwaps = ['true' => 'false', 'false' => 'true'];
+$characterSwaps = ['<' => '>=', '>' => '<=', '+' => '-', '-' => '+'];
+
+/** @return list<string> */
+function sourceFiles(string $path): array
+{
+    if (is_file($path)) {
+        return [$path];
+    }
+
+    $files = [];
+    $iterator = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($path));
+
+    foreach ($iterator as $file) {
+        if ($file->getExtension() === 'php') {
+            $files[] = $file->getPathname();
+        }
+    }
+
+    sort($files);
+
+    return $files;
+}
+
+/**
+ * Every mutation available in one file.
+ *
+ * @return list<array{index: int, line: int, from: string, to: string}>
+ */
+function mutationsFor(array $tokens, array $swaps, array $literalSwaps, array $characterSwaps, string $source): array
+{
+    $mutations = [];
+
+    // Some mutants are equivalent: the change is real but cannot alter
+    // behaviour, so no test could ever kill them. Mark those lines with
+    // `mutation:ignore` and a reason, rather than pretending the score is
+    // lower than it is.
+    $ignoredLines = [];
+
+    foreach (explode("\n", $source) as $number => $line) {
+        if (str_contains($line, 'mutation:ignore')) {
+            $ignoredLines[$number + 1] = true;
+        }
+    }
+
+    $line = 0;
+
+    foreach ($tokens as $index => $token) {
+        if (is_string($token)) {
+            // Single-character tokens carry no line, so inherit the last one
+            // seen rather than reporting everything as line 0.
+            if (isset($characterSwaps[$token]) && ! isset($ignoredLines[$line])) {
+                $mutations[] = ['index' => $index, 'line' => $line, 'from' => $token, 'to' => $characterSwaps[$token]];
+            }
+
+            continue;
+        }
+
+        [$id, $text, $line] = $token;
+
+        if (isset($ignoredLines[$line])) {
+            continue;
+        }
+
+        if (isset($swaps[$id][$text])) {
+            $mutations[] = ['index' => $index, 'line' => $line, 'from' => $text, 'to' => $swaps[$id][$text]];
+
+            continue;
+        }
+
+        // `true` and `false` arrive as plain identifiers.
+        if ($id === T_STRING && isset($literalSwaps[strtolower($text)])) {
+            $mutations[] = [
+                'index' => $index,
+                'line' => $line,
+                'from' => $text,
+                'to' => $literalSwaps[strtolower($text)],
+            ];
+        }
+    }
+
+    return $mutations;
+}
+
+function render(array $tokens, int $mutateAt, string $replacement): string
+{
+    $out = '';
+
+    foreach ($tokens as $index => $token) {
+        $text = is_string($token) ? $token : $token[1];
+        $out .= $index === $mutateAt ? $replacement : $text;
+    }
+
+    return $out;
+}
+
+$files = sourceFiles($path);
+
+// Every file as it was before anything was touched, so the end of the run can
+// prove it put them all back.
+$before = [];
+
+foreach ($files as $sourceFile) {
+    $before[$sourceFile] = hash('xxh128', (string) file_get_contents($sourceFile));
+}
+$total = 0;
+$killed = 0;
+$survivors = [];
+$started = microtime(true);
+
+// A mutant that breaks the parser is not a useful signal, and one that hangs
+// would stall the run, so both are treated as killed.
+$phpunit = escapeshellarg($root . '/vendor/bin/phpunit') . ' --stop-on-failure --stop-on-error --no-output';
+
+/**
+ * Run the suite against each driver until one fails. A failure means the
+ * mutant was caught.
+ */
+$killsIt = static function () use ($phpunit, $drivers): bool {
+    foreach ($drivers as $driver) {
+        exec('DB_DRIVER=' . escapeshellarg($driver) . ' ' . $phpunit . ' > /dev/null 2>&1', $ignored, $exit);
+
+        if ($exit !== 0) {
+            return true;
+        }
+    }
+
+    return false;
+};
+
+foreach ($files as $file) {
+    $original = file_get_contents($file);
+    $tokens = token_get_all($original);
+    $mutations = mutationsFor($tokens, $swaps, $literalSwaps, $characterSwaps, $original);
+
+    if ($mutations === []) {
+        continue;
+    }
+
+    $relative = substr($file, strlen($root) + 1);
+
+    if (! $quiet) {
+        printf("%-46s %3d mutants  ", $relative, count($mutations));
+    }
+
+    $fileKilled = 0;
+
+    foreach ($mutations as $mutation) {
+        if ($limit > 0 && $total >= $limit) {
+            break 2;
+        }
+
+        $total++;
+
+        // Registered before the file is touched, so an interrupt between the
+        // write and the restore still puts the source back.
+        $GLOBALS['mutating'] = ['file' => $file, 'original' => $original];
+
+        try {
+            file_put_contents($file, render($tokens, $mutation['index'], $mutation['to']));
+
+            $caught = $killsIt();
+        } finally {
+            // Always restore, whatever happened -- including a throw from the
+            // runner, which would otherwise leave a mutant on disk and make
+            // every later run report failures that are not in the source.
+            file_put_contents($file, $original);
+            $GLOBALS['mutating'] = null;
+        }
+
+        if ($caught) {
+            $killed++;
+            $fileKilled++;
+
+            continue;
+        }
+
+        $survivors[] = sprintf(
+            '%s:%d  %s -> %s',
+            $relative,
+            $mutation['line'],
+            $mutation['from'],
+            $mutation['to'],
+        );
+    }
+
+    if (! $quiet) {
+        $escaped = count($mutations) - $fileKilled;
+        printf("%s\n", $escaped === 0 ? 'all killed' : "$escaped survived");
+    }
+}
+
+// Before any score is printed: a restore that silently did not happen leaves
+// the working tree wrong in a way that looks like a bug in the source. Later
+// runs then fail for a reason that is not in git, and the failure gets
+// attributed to whatever was edited next. Catching it here makes it loud.
+$corrupted = [];
+
+foreach ($before as $file => $hash) {
+    if (hash('xxh128', (string) file_get_contents($file)) !== $hash) {
+        $corrupted[] = $file;
+    }
+}
+
+if ($corrupted !== []) {
+    fwrite(STDERR, sprintf(
+        "\n\033[31mThis run left the working tree modified:\033[0m\n  %s\n"
+        . "Restore it with `git checkout` before trusting any result.\n",
+        implode("\n  ", $corrupted),
+    ));
+
+    exit(2);
+}
+
+$score = $total === 0 ? 100.0 : round($killed / $total * 100, 1);
+
+echo "\n";
+
+if ($survivors !== []) {
+    echo "Survivors (these lines could be wrong and no test would notice):\n\n";
+
+    foreach ($survivors as $survivor) {
+        echo "  $survivor\n";
+    }
+
+    echo "\n";
+}
+
+printf(
+    "against %s\n",
+    implode(', ', $drivers),
+);
+
+printf(
+    "%d mutants, %d killed, %d survived, score %.1f%% in %ds\n",
+    $total,
+    $killed,
+    count($survivors),
+    $score,
+    (int) (microtime(true) - $started),
+);
+
+if ($score < $minimumScore) {
+    printf("Below the %.1f%% minimum.\n", $minimumScore);
+    exit(1);
+}
+
+exit(0);

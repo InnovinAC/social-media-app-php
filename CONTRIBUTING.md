@@ -1,0 +1,221 @@
+# Contributing
+
+Thanks for looking. phpvin is small on purpose, so the most useful thing you can
+do is help keep it that way.
+
+## Getting set up
+
+```bash
+git clone https://github.com/innovin/phpvin.git
+cd phpvin
+make install
+make test
+```
+
+`make install` installs both packages: the framework at the repository root and
+the skeleton application in `skeleton/`, which resolves the framework through a
+Composer path repository so your edits to `src/` are live in the running app.
+
+```bash
+make serve     # the skeleton at http://localhost:8000
+make migrate   # apply pending migrations
+```
+
+## Before you open a pull request
+
+```bash
+composer check
+```
+
+That runs the three things CI runs: code style, PHPStan at level 6, and the test
+suite. All three must pass. `composer style:fix` applies the style rules for you.
+
+### Mutation testing
+
+A green suite proves the tests ran, not that they would notice if the code
+broke. `bin/mutate` breaks the source one edit at a time (flipping a
+comparison, inverting a boolean) and reruns the suite. A mutant that survives
+is a line that could be wrong with every test still passing.
+
+```bash
+composer mutate                 # against SQLite
+make db-up && make mutate-drivers   # against all three
+```
+
+The bar is 100% across the driver matrix. That is stricter than it sounds,
+because coverage is driver-dependent: a branch that only differs on Postgres
+cannot be killed by a SQLite run. When a mutant survives, one of three things
+is true, in rough order of likelihood:
+
+1. **A test is missing.** Write it.
+2. **The mutant is equivalent.** The edit is real but cannot change behaviour.
+   Mark the line `// mutation:ignore <reason>`. The reason is not optional.
+3. **The code is dead.** Delete it. Several survivors turned out to be
+   redundant guards and unreachable fallbacks.
+
+`bin/mutate` edits real files, so nothing else can read the tree while it is
+going. A concurrent test run reads whichever mutant happens to be applied and
+reports a bug that does not exist. That is enforced rather than asked for: the
+run takes a lock, and `bin/fuzz`, `bin/differential`, `bin/memory` and
+`bin/package-check` all refuse while it is held, as does a second `bin/mutate`.
+A lock left behind by a killed run is reclaimed automatically rather than
+needing a human to delete it.
+
+The enforcement exists because the note that used to be here did not work. Both
+failures happened during this framework's own development, to the person who
+wrote the note: a concurrent fuzz run reported a `TypeError` that did not
+exist, and a packaging check packaged a mutated source and failed. Each cost
+more time than the run it overlapped.
+
+`bin/mutate` also puts every file back on the way out, including on Ctrl-C, a
+CI timeout or a fatal error, and verifies before printing a score that it
+actually did. If it ever reports that it left the tree modified, `git checkout`
+before trusting anything you ran after it.
+
+### Fuzzing
+
+Mutation testing asks whether the tests would notice the code changing. Fuzzing
+asks the other question: whether the code notices *input* changing. `bin/fuzz`
+throws things no reasonable caller would send (control bytes, overlong UTF-8,
+traversal sequences, integer boundaries, serialised objects) at every parser.
+
+```bash
+make fuzz                    # 50,000 cases from a random seed
+./bin/fuzz --seed=12345      # replay a reported failure exactly
+```
+
+The rule each entry point is held to is **reject whatever you like, but reject
+it deliberately**. An exception the method documents is a pass: the input was
+understood and refused. A `TypeError`, `ValueError` or `Error` is a failure,
+because it means the value reached code that had assumed it could not exist.
+That is the line between handling something and happening to survive it.
+
+If you add a parser, add it to the target list in `bin/fuzz` and say which
+exceptions it is allowed to throw. And when you add a target, check that it can
+actually fail: break the guard on purpose, confirm the fuzzer catches it, then
+put it back. A target whose assertion is too weak to fail is worse than no
+target, because it reads as coverage. One here compared an unresolved path
+against its own root prefix, which passes for `/root/../etc/passwd`; it was
+found exactly this way.
+
+### Cross-driver agreement
+
+Mutation testing asks whether the tests would notice the code changing.
+Fuzzing asks whether the code notices the input changing. `bin/differential`
+asks a third thing: whether the three drivers agree.
+
+```bash
+make db-up && make differential
+./bin/differential --seed=12345
+```
+
+It generates query shapes (joins, groups, havings, null-heavy sorts, limits,
+offsets), runs each against SQLite, MySQL and Postgres, and requires one
+answer. There is no expected result to write down: the oracle is agreement,
+because the promise the framework makes is that changing the driver does not
+change the result. A disagreement is therefore a grammar bug by definition, and
+which driver is "right" is usually beside the point.
+
+Two things it found immediately, neither reachable from a test anyone would sit
+down and write: an aggregate over a grouped query kept the table name on a
+column the subquery had put out of scope, and null ordering diverged silently
+between engines.
+
+If a generated query is *invalid SQL* rather than a disagreement (`SELECT *`
+with a `GROUP BY`, say, which only SQLite tolerates), that is the generator's
+bug, not the framework's. Fix the generator to name its columns. Portability of
+queries nobody promised to support is not the property under test.
+
+### Concurrency
+
+`tests/ConcurrencyTest.php` spawns real PHP processes. That is deliberate and
+worth preserving: a single-process suite runs each operation to completion
+before starting the next, which is the one condition under which a
+read-modify-write race cannot happen. Serial tests are therefore not weak
+evidence about concurrency; they are no evidence at all, and they read as
+reassurance, which is worse.
+
+The rate limiter shipped such a race. `hit()` read a count, added one and wrote
+it back; `write()` passed `LOCK_EX`, which looks like it covers the sequence
+and does not, because the lock is taken for the write alone. Sixty concurrent
+attempts recorded six.
+
+If you touch anything that counts, locks, or writes a file two requests could
+reach at once, write the process-spawning test and **watch it fail against the
+unfixed code first**. A concurrency test that has never failed has not been
+shown to be able to.
+
+Keep these tests small. Mutation testing reruns the suite hundreds of times, so
+a dozen spawned processes per run is a real cost. Verify at a high worker
+count, then turn it down and leave a note saying what it was verified at.
+
+### Memory retention
+
+`bin/memory` measures what a booted application retains per request. Growth is
+counted after a warm-up, because the first few hundred requests are one-time
+allocations (autoloaded classes, the container's shared instances), and
+counting those as a leak would condemn every framework ever written.
+
+```bash
+make memory
+```
+
+The bar is bytes, not kilobytes: a worker handling a million requests a day
+turns 64 retained bytes per request into 64MB.
+
+Same rule as the other harnesses: a profiler reporting zero everywhere is
+exactly when to distrust it. Introduce a leak on purpose, confirm it is caught,
+then take it back out. This one has been checked twice that way, and the second
+check was a real bug: a template that threw after asking for a layout never had
+its request taken off the stack.
+
+### Packaging
+
+There is a fourth check worth running when you touch anything outside `src/`:
+
+```bash
+make package-check
+```
+
+It builds the distributable the way `.gitattributes` says it ships, installs it
+**copied** into a throwaway application, and boots it. A path repository is a
+symlink, so the skeleton booting proves nothing about whether a file was left
+out of the package.
+
+## What a good change looks like
+
+- **A test that fails before and passes after.** Everything runs against
+  in-memory SQLite, so there is no fixture database to set up.
+- **A comment where the reason is not obvious from the code.** Say why, not
+  what. The existing source is the reference for tone and density.
+- **Types that PHPStan can follow.** Level 6 means every array needs a value
+  type in its docblock.
+
+## The design rules
+
+These are not style preferences; a change that breaks one needs a strong
+argument.
+
+- **No facades, no global helpers, no service locator.** If a class needs
+  something it asks for it in the constructor.
+- **No magic strings.** Route handlers are `[Controller::class, 'method']`.
+- **No hidden global state.** Active Record's static connection is the one
+  documented exception, because the pattern cannot work without it.
+- **Secure by default.** Mass assignment is opt-in, uploads are identified by
+  their bytes rather than their filename, and values are bound rather than
+  interpolated into SQL.
+- **The core stays small.** New capability should usually arrive as a service
+  provider, a middleware, a view engine, or a validation rule registered with
+  `Validator::extend()`, all of which are extension points that already exist.
+  A required dependency added to the framework needs a real justification.
+
+## Reporting a bug
+
+A failing test is the best bug report. Second best is the smallest snippet that
+reproduces it, plus your PHP version and database driver. A good number of
+sharp edges only show up on MySQL, where PDO returns every column as a string.
+
+## Security
+
+Please do not open a public issue for a security problem. See
+[SECURITY.md](SECURITY.md).

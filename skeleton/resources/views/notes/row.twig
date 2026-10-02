@@ -1,0 +1,11 @@
+{# A fragment: no layout, just the piece of markup that goes into the page. #}
+<li class="note" id="note-{{ note.id }}">
+    <span>{{ note.body }}</span>
+    <a href="{{ route('notes.destroy', {'id': note.id}) }}"
+       data-method="delete"
+       data-confirm="Delete this note?"
+       data-target="#note-{{ note.id }}"
+       data-swap="remove"
+       class="remove"
+       aria-label="Delete note">&times;</a>
+</li>

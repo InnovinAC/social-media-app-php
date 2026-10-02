@@ -1,0 +1,292 @@
+name: tests
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.2', '8.3', '8.4']
+
+    name: Framework / PHP ${{ matrix.php }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: pdo, pdo_sqlite
+          coverage: none
+
+      - run: composer install --prefer-dist --no-interaction --no-progress
+
+      - name: Syntax check
+        run: |
+          find src tests -name '*.php' -print0 | xargs -0 -n1 php -l > /dev/null
+          node --check resources/js/phpvin.js
+
+      - run: ./vendor/bin/phpunit
+
+  # The bugs that only exist on a database you did not develop on: Postgres
+  # rejects backticks, MySQL commits implicitly on DDL, and PDO returns every
+  # column as a string on MySQL. None of it shows up under SQLite.
+  databases:
+    runs-on: ubuntu-latest
+    name: Framework / ${{ matrix.driver }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - driver: mysql
+            port: 3306
+          - driver: pgsql
+            port: 5432
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: secret
+          MYSQL_DATABASE: phpvin_test
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd="mysqladmin ping -psecret"
+          --health-interval=10s --health-timeout=5s --health-retries=10
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: secret
+          POSTGRES_DB: phpvin_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd=pg_isready
+          --health-interval=10s --health-timeout=5s --health-retries=10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: pdo, pdo_sqlite, pdo_mysql, pdo_pgsql
+          coverage: none
+
+      - run: composer install --prefer-dist --no-interaction --no-progress
+
+      - run: ./vendor/bin/phpunit
+        env:
+          DB_DRIVER: ${{ matrix.driver }}
+          DB_HOST: 127.0.0.1
+          DB_PORT: ${{ matrix.port }}
+          DB_DATABASE: phpvin_test
+          DB_USERNAME: ${{ matrix.driver == 'mysql' && 'root' || 'postgres' }}
+          DB_PASSWORD: secret
+
+  quality:
+    runs-on: ubuntu-latest
+    name: Framework / static analysis and style
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: pdo, pdo_sqlite
+          coverage: none
+
+      - run: composer install --prefer-dist --no-interaction --no-progress
+
+      - name: PHPStan
+        run: ./vendor/bin/phpstan analyse --no-progress --memory-limit=512M
+
+      - name: Code style
+        run: ./vendor/bin/php-cs-fixer fix --dry-run --diff
+        env:
+          PHP_CS_FIXER_IGNORE_ENV: 1
+
+  minimal-install:
+    runs-on: ubuntu-latest
+    name: Framework / no optional dependencies
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: pdo, pdo_sqlite
+          coverage: none
+
+      # The core must work with neither Twig nor dotenv present.
+      - run: composer install --no-dev --prefer-dist --no-interaction --no-progress
+      - run: php tests/smoke/api-only.php
+
+  package:
+    runs-on: ubuntu-latest
+    name: Package / installs as a dependency
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: pdo, pdo_sqlite
+          coverage: none
+
+      - name: Validate both manifests
+        run: |
+          composer validate --strict --no-check-all
+          cd skeleton && composer validate --no-check-publish
+
+      # Builds the distributable, installs it copied (not symlinked) into a
+      # throwaway app, and boots it. Catches anything that only works because
+      # the framework source happens to sit next door.
+      - name: Install and boot as a real dependency
+        run: bin/package-check
+
+  skeleton:
+    runs-on: ubuntu-latest
+    name: Skeleton / boots against the local framework
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: pdo, pdo_sqlite
+          coverage: none
+
+      - name: Install the skeleton
+        working-directory: skeleton
+        run: |
+          composer install --prefer-dist --no-interaction --no-progress
+          cp .env.example .env
+
+      # The application's own suite, written on the framework's testing
+      # toolkit. This is the proof that an app built on phpvin is testable.
+      - name: Run the application test suite
+        working-directory: skeleton
+        run: ./vendor/bin/phpunit
+
+      - name: Migrate and smoke test
+        working-directory: skeleton
+        run: |
+          php database/migrate.php
+          php -S localhost:8000 -t public &
+          sleep 2
+          curl -sf http://localhost:8000/ > /dev/null
+          curl -sf http://localhost:8000/api/health | grep -q '"status":"ok"'
+          curl -sf http://localhost:8000/_phpvin/phpvin.js > /dev/null
+
+  # Slow (a few minutes) and only meaningful once the suite is green, so it
+  # runs on its own rather than blocking every other job.
+  fuzz:
+    runs-on: ubuntu-latest
+    name: Framework / fuzzing
+    needs: [test]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: pdo, pdo_sqlite
+          coverage: none
+
+      - run: composer install --prefer-dist --no-interaction --no-progress
+
+      # A fresh seed every run, so CI keeps exploring inputs rather than
+      # re-testing the same ones. A failure prints the seed that produced it.
+      - run: ./bin/fuzz --cases=100000
+
+  differential:
+    runs-on: ubuntu-latest
+    name: Framework / cross-driver agreement
+    needs: [test]
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: secret
+          MYSQL_DATABASE: phpvin_test
+        ports: ['33061:3306']
+        options: >-
+          --health-cmd="mysqladmin ping" --health-interval=10s
+          --health-timeout=5s --health-retries=5
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: secret
+          POSTGRES_DB: phpvin_test
+        ports: ['54321:5432']
+        options: >-
+          --health-cmd=pg_isready --health-interval=10s
+          --health-timeout=5s --health-retries=5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: pdo, pdo_sqlite, pdo_mysql, pdo_pgsql
+          coverage: none
+
+      - run: composer install --prefer-dist --no-interaction --no-progress
+
+      # A fresh seed each run, so it keeps exploring query shapes.
+      - run: ./bin/differential --queries=3000
+
+  memory:
+    runs-on: ubuntu-latest
+    name: Framework / memory retention
+    needs: [test]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: pdo, pdo_sqlite
+          coverage: none
+
+      - run: composer install --prefer-dist --no-interaction --no-progress
+
+      # Fails if any path retains more than 1KB per thousand requests.
+      - run: ./bin/memory --requests=20000
+
+  mutation:
+    runs-on: ubuntu-latest
+    name: Framework / mutation testing
+    needs: [test]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: pdo, pdo_sqlite
+          coverage: none
+
+      - run: composer install --prefer-dist --no-interaction --no-progress
+
+      # A mutant that only dies on MySQL or Postgres cannot be killed here, so
+      # the bar is set below 100 for the SQLite-only run.
+      - run: ./bin/mutate --min=97

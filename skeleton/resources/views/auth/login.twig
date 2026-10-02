@@ -1,0 +1,27 @@
+{% extends 'layout.twig' %}
+
+{% block title %}Sign in{% endblock %}
+
+{% block content %}
+    <h1>Sign in</h1>
+
+    <form method="post" action="{{ route('login') }}">
+        <input type="hidden" name="_token" value="{{ csrf_token }}">
+
+        <label>
+            Email
+            <input type="email" name="email" value="{{ old.email|default('') }}" required autofocus>
+            {% if errors.email is defined %}<span class="error">{{ errors.email|first }}</span>{% endif %}
+        </label>
+
+        <label>
+            Password
+            <input type="password" name="password" required>
+            {% if errors.password is defined %}<span class="error">{{ errors.password|first }}</span>{% endif %}
+        </label>
+
+        <button type="submit">Sign in</button>
+    </form>
+
+    <p>No account yet? <a href="{{ route('register') }}">Register</a>.</p>
+{% endblock %}

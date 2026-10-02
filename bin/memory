@@ -1,0 +1,230 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+/**
+ * Measure what a booted application *retains*, not how fast it runs.
+ *
+ * `bin/bench` answers how long a request takes. This answers a question that
+ * only matters once the process outlives the request: does handling one leave
+ * anything behind? Under mod_php or FPM nobody finds out, because the
+ * interpreter tears everything down every time and a leak is indistinguishable
+ * from correctness. Under FrankenPHP, RoadRunner, Swoole or a queue worker the
+ * process boots once and serves for days, and a few hundred retained bytes per
+ * request is a restart loop.
+ *
+ * The measurement is growth per thousand requests after a warm-up, because the
+ * first few hundred are all one-time allocations -- autoloaded classes, opcode
+ * caches, the container's shared instances -- and counting those as a leak
+ * would condemn every framework ever written.
+ *
+ *   bin/memory                  the default sweep
+ *   bin/memory --requests=50000 a longer soak
+ */
+
+require __DIR__ . '/../vendor/autoload.php';
+require __DIR__ . '/guard.php';
+
+refuseWhileMutating('bin/memory');
+
+use Phpvin\Application;
+use Phpvin\Container\Container;
+use Phpvin\Http\Request;
+use Phpvin\Http\Response;
+use Phpvin\Routing\Router;
+use Phpvin\View\PhpEngine;
+
+$options = getopt('', ['requests::', 'quiet']);
+$requests = isset($options['requests']) ? (int) $options['requests'] : 20000;
+$quiet = isset($options['quiet']);
+
+/**
+ * Bytes retained per thousand operations, measured after a warm-up.
+ *
+ * @param Closure(int): void $operation
+ */
+function retention(string $label, int $total, Closure $operation): array
+{
+    $warmup = max(500, (int) ($total * 0.1));
+
+    for ($i = 0; $i < $warmup; $i++) {
+        $operation($i);
+    }
+
+    gc_collect_cycles();
+    $before = memory_get_usage();
+
+    for ($i = 0; $i < $total; $i++) {
+        $operation($warmup + $i);
+    }
+
+    gc_collect_cycles();
+    $after = memory_get_usage();
+
+    $perThousand = ($after - $before) / max(1, $total) * 1000;
+
+    return [
+        'label' => $label,
+        'grew' => $after - $before,
+        'perThousand' => $perThousand,
+    ];
+}
+
+$results = [];
+
+// --- routing ---------------------------------------------------------------
+
+$router = new Router();
+
+for ($i = 0; $i < 200; $i++) {
+    $router->get("/resource-$i", static fn (): Response => Response::html('ok'));
+}
+
+$router->get('/api/item/{id}', static fn (int $id): array => ['id' => $id], where: ['id' => '\d+']);
+
+$hit = Request::create('GET', '/resource-150');
+$dynamic = Request::create('GET', '/api/item/42');
+
+$results[] = retention('Router::resolve (static)', $requests, static function () use ($router, $hit): void {
+    $router->resolve($hit);
+});
+
+$results[] = retention('Router::resolve (dynamic)', $requests, static function () use ($router, $dynamic): void {
+    $router->resolve($dynamic);
+});
+
+// A miss walks every fallback and asks which verbs would have matched, which
+// is the most allocation-heavy path in the router.
+$results[] = retention('Router::resolve (404)', $requests, static function () use ($router): void {
+    try {
+        $router->resolve(Request::create('GET', '/nothing-matches'));
+    } catch (Throwable) {
+        // The miss is the point.
+    }
+});
+
+// --- container -------------------------------------------------------------
+
+$container = new Container();
+
+$results[] = retention('Container::get (transient)', $requests, static function () use ($container): void {
+    $container->get(MemoryProbe::class);
+});
+
+// --- whole request ---------------------------------------------------------
+
+$app = new Application(dirname(__DIR__), [
+    'views' => ['engine' => 'none'],
+    'session' => false,
+    'providers' => [],
+]);
+
+for ($i = 0; $i < 200; $i++) {
+    $app->router()->get("/resource-$i", static fn (): Response => Response::html('ok'));
+}
+
+$app->router()->get('/api/item/{id}', static fn (int $id): array => ['id' => $id], where: ['id' => '\d+']);
+
+$htmlRequest = Request::create('GET', '/resource-0');
+$jsonRequest = Request::create('GET', '/api/item/42');
+
+$results[] = retention('Application::handle (html)', $requests, static function () use ($app, $htmlRequest): void {
+    $app->handle($htmlRequest);
+});
+
+$results[] = retention('Application::handle (json)', $requests, static function () use ($app, $jsonRequest): void {
+    $app->handle($jsonRequest);
+});
+
+$results[] = retention('Application::handle (404)', $requests, static function () use ($app): void {
+    $app->handle(Request::create('GET', '/nothing-matches'));
+});
+
+// A fresh Request each time, which is what a real worker does -- reusing one
+// would hide anything the request itself holds on to.
+$results[] = retention('Application::handle (fresh request)', $requests, static function (int $i) use ($app): void {
+    $app->handle(Request::create('GET', '/resource-' . ($i % 200)));
+});
+
+// --- views -----------------------------------------------------------------
+
+// Rendering is where retention actually hides: an engine holds shared data, a
+// layout stack, a compiled-template cache. The failing render is included on
+// purpose -- a template that errors is ordinary in production, and the error
+// path is the one nobody exercises ten thousand times.
+$viewRoot = sys_get_temp_dir() . '/phpvin-memory-' . bin2hex(random_bytes(6));
+mkdir($viewRoot, 0o777, true);
+file_put_contents($viewRoot . '/shell.php', '<?= $this->section() ?>');
+file_put_contents($viewRoot . '/page.php', '<?php $this->layout("shell") ?><?= $e($title) ?>');
+file_put_contents(
+    $viewRoot . '/explodes.php',
+    '<?php $this->layout("shell") ?><?php throw new RuntimeException("boom"); ?>',
+);
+
+$engine = new PhpEngine($viewRoot);
+
+$results[] = retention('PhpEngine::render (with layout)', $requests, static function () use ($engine): void {
+    $engine->render('page', ['title' => 'hello']);
+});
+
+$results[] = retention('PhpEngine::render (throwing)', $requests, static function () use ($engine): void {
+    try {
+        $engine->render('explodes');
+    } catch (Throwable) {
+        // The failure is the point.
+    }
+});
+
+register_shutdown_function(static fn () => exec('rm -rf ' . escapeshellarg($viewRoot)));
+
+// --- report ----------------------------------------------------------------
+
+if (! $quiet) {
+    printf("%d requests each, after a warm-up\n\n", $requests);
+    printf("%-38s %14s %16s\n", '', 'total growth', 'per 1k requests');
+}
+
+$leaking = [];
+
+foreach ($results as $result) {
+    // A worker handling a million requests a day turns 64 bytes per request
+    // into 64MB, so the bar is bytes rather than kilobytes.
+    $bad = $result['perThousand'] > 1024;
+
+    if ($bad) {
+        $leaking[] = $result;
+    }
+
+    if (! $quiet) {
+        printf(
+            "  %-36s %12s B %14s B%s\n",
+            $result['label'],
+            number_format($result['grew']),
+            number_format($result['perThousand'], 1),
+            $bad ? "  \033[31m<-- grows\033[0m" : '',
+        );
+    }
+}
+
+echo "\n";
+
+if ($leaking === []) {
+    printf("\033[32mNothing retained. Safe to boot once and serve for days.\033[0m\n");
+
+    exit(0);
+}
+
+printf("\033[31m%d path(s) retain memory per request.\033[0m\n", count($leaking));
+printf("A worker handling a million requests would grow by:\n");
+
+foreach ($leaking as $result) {
+    printf("  %-36s %s MB\n", $result['label'], number_format($result['perThousand'] * 1000 / 1024 / 1024, 1));
+}
+
+exit(1);
+
+final class MemoryProbe
+{
+    public function __construct() {}
+}

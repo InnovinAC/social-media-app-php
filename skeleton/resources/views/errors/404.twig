@@ -1,0 +1,9 @@
+{% extends 'layout.twig' %}
+
+{% block title %}Not found{% endblock %}
+
+{% block content %}
+    <h1>404</h1>
+    <p class="lede">There is nothing at that address.</p>
+    <p><a href="{{ route('home') }}">Back to the start</a></p>
+{% endblock %}
